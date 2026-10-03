@@ -28,6 +28,7 @@
     "db:verify:finance": "tsx prisma/verify-finance-core.ts",
     "db:verify:cash": "tsx prisma/verify-cash-reconciliation.ts",
     "db:verify:fne": "tsx prisma/verify-fne-provider.ts",
+    "db:verify:tax": "tsx prisma/verify-tax-engine.ts",
     "db:cleanup:test-data": "tsx prisma/cleanup-test-data.ts",
     "db:test:setup": "prisma migrate deploy && tsx prisma/seed.ts",
     "services:up": "docker compose up -d",

@@ -118,6 +118,11 @@ jobs:
       - name: Verify double booking protection
         run: npm run db:verify:double-booking
 
+      # Moteur de taxation : taxes exclusives, incluses, forfaitaires et
+      # taxe communale de nuitée (sections 30, 31 et 126).
+      - name: Verify tax engine
+        run: npm run db:verify:tax
+
       # Couche FNE : succès, rejet, timeout, erreur 500, requête en double
       # (sections 33 et 139).
       - name: Verify FNE provider

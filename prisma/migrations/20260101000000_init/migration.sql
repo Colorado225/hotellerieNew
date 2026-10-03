@@ -1941,6 +1941,11 @@ CREATE TRIGGER "invoices_immutable_after_finalization"
   FOR EACH ROW
   EXECUTE FUNCTION prevent_finalized_invoice_mutation();
 
+-- Mode ALWAYS pour la même raison que les triggers d'intégrité financière :
+-- un trigger en mode ENABLE n'est pas exécuté pour le rôle propriétaire, et
+-- l'application utilise ce rôle. Sans ALWAYS, la règle 7 serait contournable.
+ALTER TABLE "invoices" ENABLE ALWAYS TRIGGER "invoices_immutable_after_finalization";
+
 -- Un folio item financier n'est jamais supprimé physiquement
 -- (section 24, règle 81/5) : seule l'annulation logique via void est admise.
 CREATE OR REPLACE FUNCTION prevent_financial_row_deletion()
