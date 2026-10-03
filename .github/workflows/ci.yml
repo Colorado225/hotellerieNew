@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Une seule exécution à la fois : deux pushes rapprochés sur la même branche
+# partageront le même environnement de test.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Étapes statiques : aucune base de données requise (section 99).
+  static-checks:
+    name: Lint, typecheck, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Validate Prisma schema
+        run: npm run db:validate
+        env:
+          DATABASE_URL: postgresql://user:pass@localhost:5432/db
+          DIRECT_URL: postgresql://user:pass@localhost:5432/db
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Biome check
+        run: npm run check
+
+      - name: Build
+        run: npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  # Tests d'intégration sur PostgreSQL réel. Les tests de concurrence et
+  # d'idempotence (sections 134, 135, 136) exigent une vraie base : ils
+  # vérifient des contraintes transactionnelles, pas du JavaScript.
+  integration-tests:
+    name: Database integration tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: lagoonkey
+          POSTGRES_PASSWORD: lagoonkey
+          POSTGRES_DB: lagoonkey_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lagoonkey -d lagoonkey_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://lagoonkey:lagoonkey@localhost:5432/lagoonkey_test?schema=public
+      # Les tests n'ont pas de pooler : la connexion directe permet
+      # d'exercer les prepared statements comme en production.
+      DIRECT_URL: postgresql://lagoonkey:lagoonkey@localhost:5432/lagoonkey_test?schema=public&connection_limit=5
+      APP_ENV: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npm run db:generate
+
+      - name: Apply migrations
+        run: npm run db:deploy
+
+      # Le schéma et les migrations ne doivent jamais diverger. Cette
+      # commande échoue si une migration a été ajoutée à la main sans
+      # être reflétée dans schema.prisma.
+      - name: Verify migrations match schema
+        run: |
+          if [ -n "$(npx prisma migrate diff \
+              --from-migrations prisma/migrations \
+              --to-schema-datamodel prisma/schema.prisma \
+              --shadow-database-url "postgresql://lagoonkey:lagoonkey@localhost:5432/lagoonkey_test?schema=public" \
+              --script)" ]; then
+            echo "::error::Les migrations divergent de schema.prisma"
+            exit 1
+          fi
+
+      - name: Seed
+        run: npm run db:seed
+
+      # Contrôle d'isolation multi-tenant (section 138) : un tenant ne doit
+      # jamais voir les données d'un autre, y compris via un identifiant
+      # forgé dans l'API.
+      - name: Verify tenant isolation
+        run: npm run db:verify:tenancy
+
+      # Test de concurrence sur la dernière chambre (section 134) : deux
+      # réservation simultanées, une seule doit aboutir.
+      - name: Verify double booking protection
+        run: npm run db:verify:double-booking
+
+      # Moteur tarifaire : saisons, occupations, remises, précision bigint.
+      - name: Verify rate engine
+        run: npm run db:verify:rates
+
+      - name: Verify database integrity
+        run: npm run db:verify
+
+      # Vitest et Playwright sont ajoutés en phase 10 (section 78-80 du
+      # cahier des charges). Ce job valide dès la phase 1 que les
+      # migrations s'appliquent sur une base vierge et que le seed tient.
+      - name: Schema smoke test
+        run: npx prisma validate

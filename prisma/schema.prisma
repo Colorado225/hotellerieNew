@@ -1,0 +1,1852 @@
+// LagoonKey — PMS hôtelier
+// Schéma de données V1 (PROMPTMVP.md sections 8 à 42).
+//
+// Conventions non négociables (section 6) :
+//   - Les montants sont des BigInt. Le XOF n'a pas de sous-unité, donc
+//     1 = 1 FCFA. Jamais de Float.
+//   - Les horodatages techniques sont des timestamptz (UTC). La date
+//     d'exploitation hôtelière est un champ business_date explicite, jamais
+//     dérivée d'un timestamp.
+//   - property_id est dénormalisé sur les entités opérationnelles pour
+//     permettre les index composites exigés en section 103. L'intégrité
+//     multi-tenant sera appliquée en base (RLS) en phase 2.
+//
+// Soft delete (section 104) : uniquement sur les données maîtres, via
+// deleted_at. Aucune transaction financière n'est jamais soft-deleted.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums — section 92. Toute nomenclature de statut vit ici, jamais en libellé
+// libre dans le code applicatif.
+// ---------------------------------------------------------------------------
+
+enum OrganizationStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum PropertyStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum HotelClassification {
+  NO_STAR
+  ONE_STAR
+  TWO_STAR
+  THREE_STAR_PLUS
+}
+
+enum UserStatus {
+  ACTIVE
+  INVITED
+  DISABLED
+}
+
+enum RoleCode {
+  SUPER_ADMIN
+  OWNER
+  GENERAL_MANAGER
+  FRONT_DESK_MANAGER
+  RECEPTIONIST
+  CASHIER
+  HOUSEKEEPING_SUPERVISOR
+  HOUSEKEEPER
+  MAINTENANCE
+  ACCOUNTANT
+  AUDITOR
+}
+
+enum RoomStatus {
+  AVAILABLE
+  RESERVED
+  OCCUPIED
+  BLOCKED
+  OUT_OF_ORDER
+  OUT_OF_SERVICE
+  MAINTENANCE
+}
+
+enum HousekeepingStatus {
+  CLEAN
+  DIRTY
+  CLEANING
+  INSPECTED
+}
+
+enum FrontOfficeStatus {
+  OPEN
+  CLOSED
+}
+
+enum MaintenanceStatus {
+  NONE
+  PENDING
+  IN_PROGRESS
+  RESOLVED
+}
+
+enum ReservationStatus {
+  DRAFT
+  OPTION
+  CONFIRMED
+  WAITLISTED
+  CANCELLED
+  NO_SHOW
+  CHECKED_IN
+  CHECKED_OUT
+  CLOSED
+}
+
+enum ReservationSource {
+  DIRECT
+  PHONE
+  WHATSAPP
+  WALK_IN
+  WEBSITE
+  OTA
+  AGENCY
+  CORPORATE
+  OTHER
+}
+
+enum ReservationRoomStatus {
+  RESERVED
+  OCCUPIED
+  CANCELLED
+  COMPLETED
+}
+
+enum GuestRole {
+  PRIMARY
+  ADULT
+  CHILD
+  COMPANION
+}
+
+enum VipLevel {
+  NONE
+  SILVER
+  GOLD
+  PLATINUM
+  DIAMOND
+}
+
+enum StayStatus {
+  EXPECTED
+  CHECKED_IN
+  IN_HOUSE
+  CHECKED_OUT
+  CANCELLED
+}
+
+enum FolioStatus {
+  OPEN
+  PARTIALLY_PAID
+  PAID
+  CLOSED
+}
+
+enum FolioItemType {
+  ROOM
+  BREAKFAST
+  RESTAURANT
+  BAR
+  LAUNDRY
+  ROOM_SERVICE
+  SPA
+  OTHER_SERVICE
+  DISCOUNT
+  TAX
+  ADJUSTMENT
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  COMPLETED
+  FAILED
+  CANCELLED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  BANK_TRANSFER
+  CHEQUE
+  MOBILE_MONEY
+  OTHER
+}
+
+enum RefundStatus {
+  PENDING
+  APPROVED
+  COMPLETED
+  REJECTED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  FINALIZED
+  SUBMITTED
+  CERTIFIED
+  REJECTED
+  CANCELLED
+  CREDITED
+}
+
+enum InvoiceType {
+  NORMAL
+  DEBIT_NOTE
+  CREDIT_NOTE
+}
+
+enum FneSubmissionStatus {
+  PENDING
+  PROCESSING
+  CERTIFIED
+  REJECTED
+  RETRYING
+  FAILED
+  CANCELLED
+}
+
+enum CashSessionStatus {
+  OPEN
+  CLOSING
+  CLOSED
+}
+
+enum CashMovementType {
+  SALE
+  PAYMENT
+  REFUND
+  CASH_IN
+  CASH_OUT
+  ADJUSTMENT
+}
+
+enum HousekeepingTaskType {
+  CHECKOUT_CLEAN
+  STAYOVER
+  DEEP_CLEAN
+  INSPECTION
+  VIP_PREP
+  MAINTENANCE_FOLLOWUP
+}
+
+enum HousekeepingTaskStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  INSPECTED
+  BLOCKED
+}
+
+enum TaskPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum MaintenanceTicketStatus {
+  OPEN
+  ASSIGNED
+  IN_PROGRESS
+  WAITING_PART
+  RESOLVED
+  CLOSED
+}
+
+enum AssetStatus {
+  IN_SERVICE
+  OUT_OF_SERVICE
+  SCRAPPED
+}
+
+enum NightAuditStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum NightTaxJurisdiction {
+  NATIONAL
+  REGIONAL
+  MUNICIPAL
+}
+
+enum TaxObligationStatus {
+  PENDING
+  DECLARED
+  SUBMITTED
+  PAID
+  OVERDUE
+}
+
+enum TaxCalculationMethod {
+  PERCENTAGE
+  FIXED_AMOUNT
+  PER_NIGHT
+  PER_PERSON_PER_NIGHT
+}
+
+enum MealPlan {
+  ROOM_ONLY
+  BREAKFAST_INCLUDED
+  HALF_BOARD
+  FULL_BOARD
+  ALL_INCLUSIVE
+}
+
+enum CancellationPenaltyType {
+  NONE
+  FIXED_AMOUNT
+  FIRST_NIGHT
+  PERCENTAGE
+  FULL_STAY
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  WHATSAPP
+  SMS
+}
+
+// ---------------------------------------------------------------------------
+// Tenancy & configuration globale (sections 8.1, 8.2, 8.3, 128, 129)
+// ---------------------------------------------------------------------------
+
+model Organization {
+  id              String             @id @default(uuid()) @db.Uuid
+  name            String
+  legalName       String?            @map("legal_name")
+  slug            String             @unique
+  status          OrganizationStatus @default(ACTIVE)
+  defaultCurrency String             @default("XOF") @map("default_currency") @db.Char(3)
+  countryCode     String             @default("CI") @map("country_code") @db.Char(2)
+  createdAt       DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt       DateTime?          @map("deleted_at") @db.Timestamptz(3)
+
+  properties      Property[]
+  users           User[]
+  roles           Role[]
+  auditLogs       AuditLog[]
+  idempotencyKeys IdempotencyKey[]
+  outboxEvents    OutboxEvent[]
+
+  @@index([status])
+  @@map("organizations")
+}
+
+model Property {
+  id                  String               @id @default(uuid()) @db.Uuid
+  organizationId      String               @map("organization_id") @db.Uuid
+  name                String
+  code                String
+  slug                String
+  legalName           String?              @map("legal_name")
+  rccm                String?
+  taxIdentifier       String?              @map("tax_identifier")
+  addressLine1        String?              @map("address_line1")
+  addressLine2        String?              @map("address_line2")
+  city                String?
+  region              String?
+  district            String?
+  postalCode          String?              @map("postal_code")
+  country             String               @default("CI") @db.Char(2)
+  phone               String?
+  email               String?
+  website             String?
+  // Toute opération métier convertit vers ce fuseau (section 6).
+  timezone            String               @default("Africa/Abidjan")
+  currency            String               @default("XOF") @db.Char(3)
+  hotelClassification HotelClassification? @map("hotel_classification")
+  starRating          Int?                 @map("star_rating")
+  checkInTime         String               @default("15:00") @map("check_in_time")
+  checkOutTime        String               @default("11:00") @map("check_out_time")
+  status              PropertyStatus       @default(ACTIVE)
+  logoUrl             String?              @map("logo_url")
+  // Avance d'une seule valeur : incrémentée par le night audit (section 105).
+  businessDate        DateTime             @default(now()) @map("business_date") @db.Date
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt           DateTime?            @map("deleted_at") @db.Timestamptz(3)
+
+  organization           Organization            @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  settings               PropertySetting[]
+  buildings              Building[]
+  floors                 Floor[]
+  amenities              Amenity[]
+  roomTypes              RoomType[]
+  rooms                  Room[]
+  guestDocuments         GuestDocument[]
+  roomAmenities          RoomAmenity[]
+  roomTypeAmenities      RoomTypeAmenity[]
+  guests                 Guest[]
+  companies              Company[]
+  agencies               Agency[]
+  ratePlans              RatePlan[]
+  seasons                Season[]
+  ratePlanPrices         RatePlanPrice[]
+  cancellationPolicies   CancellationPolicy[]
+  reservations           Reservation[]
+  reservationRooms       ReservationRoom[]
+  stays                  Stay[]
+  stayRooms              StayRoom[]
+  folios                 Folio[]
+  folioItems             FolioItem[]
+  payments               Payment[]
+  refunds                Refund[]
+  invoices               Invoice[]
+  taxRules               TaxRule[]
+  nightTaxConfigurations NightTaxConfiguration[]
+  taxObligations         TaxObligation[]
+  fneDocuments           FneDocument[]
+  cashRegisters          CashRegister[]
+  cashSessions           CashSession[]
+  housekeepingTasks      HousekeepingTask[]
+  maintenanceTickets     MaintenanceTicket[]
+  assets                 Asset[]
+  nightAudits            NightAudit[]
+  roomStatusHistory      RoomStatusHistory[]
+  auditLogs              AuditLog[]
+  outboxEvents           OutboxEvent[]
+  idempotencyKeys        IdempotencyKey[]
+  dailyMetrics           DailyHotelMetric[]
+
+  @@unique([organizationId, code])
+  @@unique([organizationId, slug])
+  @@index([organizationId])
+  @@index([organizationId, status])
+  @@index([status])
+  @@map("properties")
+}
+
+// Section 8.3 : paramètres à clé/valeur typés, pas un blob JSON opaque.
+model PropertySetting {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @map("property_id") @db.Uuid
+  key        String
+  value      String?
+  valueType  String   @default("string") @map("value_type")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, key])
+  @@map("property_settings")
+}
+
+// ---------------------------------------------------------------------------
+// Identité, rôles, permissions (sections 39, 40, 41, 128, 129)
+// ---------------------------------------------------------------------------
+
+model User {
+  id                  String     @id @default(uuid()) @db.Uuid
+  organizationId      String     @map("organization_id") @db.Uuid
+  firstName           String     @map("first_name")
+  lastName            String     @map("last_name")
+  email               String
+  phone               String?
+  username            String?
+  passwordHash        String?    @map("password_hash")
+  status              UserStatus @default(INVITED)
+  mfaEnabled          Boolean    @default(false) @map("mfa_enabled")
+  mfaSecret           String?    @map("mfa_secret")
+  lastLoginAt         DateTime?  @map("last_login_at") @db.Timestamptz(3)
+  failedLoginAttempts Int        @default(0) @map("failed_login_attempts")
+  lockedUntil         DateTime?  @map("locked_until") @db.Timestamptz(3)
+  createdAt           DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt           DateTime?  @map("deleted_at") @db.Timestamptz(3)
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  roles        UserRole[]
+  accounts     Account[]
+  sessions     Session[]
+  cashSessions CashSession[]
+  auditLogs    AuditLog[]
+  fneDocuments FneDocument[] @relation("FneSubmittedBy")
+
+  @@unique([organizationId, email])
+  @@index([organizationId])
+  @@index([email])
+  @@map("users")
+}
+
+model Role {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String?   @map("organization_id") @db.Uuid
+  name           String
+  code           RoleCode?
+  description    String?
+  // Les rôles système ne sont ni supprimables ni renommables.
+  isSystemRole   Boolean   @default(false) @map("is_system_role")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  organization Organization?    @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  users        UserRole[]
+  permissions  RolePermission[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@map("roles")
+}
+
+// Granularité "resource.action" (section 41). Aucune vérification basée sur
+// un libellé de rôle dans le code applicatif.
+model Permission {
+  id          String  @id @default(uuid()) @db.Uuid
+  resource    String
+  action      String
+  description String?
+
+  roles RolePermission[]
+
+  @@unique([resource, action])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model UserRole {
+  userId     String   @map("user_id") @db.Uuid
+  roleId     String   @map("role_id") @db.Uuid
+  // Portée du rôle : null = toute l'organisation.
+  propertyId String?  @map("property_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, roleId])
+  @@index([roleId])
+  @@map("user_roles")
+}
+
+// Sessions et comptes pour l'authentification gérée par Auth.js.
+model Account {
+  id                String  @id @default(uuid()) @db.Uuid
+  userId            String  @map("user_id") @db.Uuid
+  type              String
+  provider          String?
+  providerAccountId String  @map("provider_account_id")
+  refreshToken      String? @map("refresh_token") @db.Text
+  accessToken       String? @map("access_token") @db.Text
+  expiresAt         Int?    @map("expires_at")
+  tokenType         String? @map("token_type")
+  scope             String?
+  idToken           String? @map("id_token") @db.Text
+  sessionState      String? @map("session_state")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(uuid()) @db.Uuid
+  sessionToken String   @unique @map("session_token")
+  userId       String   @map("user_id") @db.Uuid
+  expires      DateTime @db.Timestamptz(3)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime @db.Timestamptz(3)
+
+  @@id([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ---------------------------------------------------------------------------
+// Structure physique (section 9)
+// ---------------------------------------------------------------------------
+
+model Building {
+  id          String   @id @default(uuid()) @db.Uuid
+  propertyId  String   @map("property_id") @db.Uuid
+  name        String
+  code        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  floors   Floor[]
+  rooms    Room[]
+
+  @@unique([propertyId, code])
+  @@map("buildings")
+}
+
+model Floor {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @map("property_id") @db.Uuid
+  buildingId String?  @map("building_id") @db.Uuid
+  name       String
+  number     Int
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property  @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  building Building? @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+  rooms    Room[]
+
+  @@unique([propertyId, buildingId, number])
+  @@index([propertyId])
+  @@map("floors")
+}
+
+model Amenity {
+  id          String   @id @default(uuid()) @db.Uuid
+  propertyId  String   @map("property_id") @db.Uuid
+  name        String
+  code        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  property  Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  rooms     RoomAmenity[]
+  roomTypes RoomTypeAmenity[]
+
+  @@unique([propertyId, code])
+  @@map("amenities")
+}
+
+model RoomType {
+  id               String         @id @default(uuid()) @db.Uuid
+  propertyId       String         @map("property_id") @db.Uuid
+  name             String
+  code             String
+  description      String?
+  shortDescription String?        @map("short_description")
+  capacityAdults   Int            @default(2) @map("capacity_adults")
+  capacityChildren Int            @default(0) @map("capacity_children")
+  maxOccupancy     Int            @map("max_occupancy")
+  baseOccupancy    Int            @default(2) @map("base_occupancy")
+  bedConfiguration String?        @map("bed_configuration")
+  surfaceArea      Decimal?       @map("surface_area") @db.Decimal(8, 2)
+  defaultRate      BigInt?        @map("default_rate")
+  status           PropertyStatus @default(ACTIVE)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt        DateTime?      @map("deleted_at") @db.Timestamptz(3)
+
+  property         Property          @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  rooms            Room[]
+  amenities        RoomTypeAmenity[]
+  reservationRooms ReservationRoom[]
+  stayRooms        StayRoom[]
+  ratePlanPrices   RatePlanPrice[]
+
+  @@unique([propertyId, code])
+  @@index([propertyId, status])
+  @@map("room_types")
+}
+
+// Section 9 : le statut d'une chambre est décomposé en dimensions
+// orthogonales. Une chambre vacante n'est pas disponible tant que le
+// housekeeping n'a pas validé le nettoyage (section 36).
+model Room {
+  id                 String             @id @default(uuid()) @db.Uuid
+  propertyId         String             @map("property_id") @db.Uuid
+  buildingId         String?            @map("building_id") @db.Uuid
+  floorId            String?            @map("floor_id") @db.Uuid
+  roomTypeId         String             @map("room_type_id") @db.Uuid
+  number             String
+  code               String
+  status             RoomStatus         @default(AVAILABLE)
+  housekeepingStatus HousekeepingStatus @default(CLEAN) @map("housekeeping_status")
+  frontOfficeStatus  FrontOfficeStatus  @default(OPEN) @map("front_office_status")
+  maintenanceStatus  MaintenanceStatus  @default(NONE) @map("maintenance_status")
+  floorLocation      String?            @map("floor_location")
+  capacity           Int                @default(2)
+  notes              String?
+  createdAt          DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt          DateTime?          @map("deleted_at") @db.Timestamptz(3)
+
+  property           Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  building           Building?           @relation(fields: [buildingId], references: [id], onDelete: SetNull)
+  floor              Floor?              @relation(fields: [floorId], references: [id], onDelete: SetNull)
+  roomType           RoomType            @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  amenities          RoomAmenity[]
+  statusHistory      RoomStatusHistory[]
+  reservationRooms   ReservationRoom[]
+  stayRooms          StayRoom[]
+  housekeepingTasks  HousekeepingTask[]
+  maintenanceTickets MaintenanceTicket[]
+  assets             Asset[]
+
+  @@unique([propertyId, number])
+  @@unique([propertyId, code])
+  @@index([propertyId, status])
+  @@index([propertyId, roomTypeId])
+  @@index([propertyId, housekeepingStatus])
+  @@map("rooms")
+}
+
+model RoomAmenity {
+  roomId     String @map("room_id") @db.Uuid
+  amenityId  String @map("amenity_id") @db.Uuid
+  propertyId String @map("property_id") @db.Uuid
+
+  room     Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  amenity  Amenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, amenityId])
+  @@index([propertyId])
+  @@map("room_amenities")
+}
+
+model RoomTypeAmenity {
+  roomTypeId String @map("room_type_id") @db.Uuid
+  amenityId  String @map("amenity_id") @db.Uuid
+  propertyId String @map("property_id") @db.Uuid
+
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  amenity  Amenity  @relation(fields: [amenityId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@id([roomTypeId, amenityId])
+  @@index([propertyId])
+  @@map("room_type_amenities")
+}
+
+// Section 10 : toute transition opérationnelle laisse une trace.
+model RoomStatusHistory {
+  id             String      @id @default(uuid()) @db.Uuid
+  propertyId     String      @map("property_id") @db.Uuid
+  roomId         String      @map("room_id") @db.Uuid
+  previousStatus RoomStatus? @map("previous_status")
+  newStatus      RoomStatus  @map("new_status")
+  reason         String?
+  referenceType  String?     @map("reference_type")
+  referenceId    String?     @map("reference_id") @db.Uuid
+  changedBy      String?     @map("changed_by") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  room     Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, createdAt])
+  @@index([roomId, createdAt])
+  @@map("room_status_history")
+}
+
+// ---------------------------------------------------------------------------
+// Tarification (section 11) et politiques (section 12)
+// ---------------------------------------------------------------------------
+
+model RatePlan {
+  id                   String   @id @default(uuid()) @db.Uuid
+  propertyId           String   @map("property_id") @db.Uuid
+  name                 String
+  code                 String
+  description          String?
+  mealPlan             MealPlan @default(ROOM_ONLY) @map("meal_plan")
+  cancellationPolicyId String?  @map("cancellation_policy_id") @db.Uuid
+  paymentPolicy        String?  @map("payment_policy")
+  isRefundable         Boolean  @default(false) @map("is_refundable")
+  isPublic             Boolean  @default(true) @map("is_public")
+  isActive             Boolean  @default(true) @map("is_active")
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property           Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  cancellationPolicy CancellationPolicy? @relation(fields: [cancellationPolicyId], references: [id], onDelete: SetNull)
+  prices             RatePlanPrice[]
+  reservationRooms   ReservationRoom[]
+
+  @@unique([propertyId, code])
+  @@index([propertyId, isActive])
+  @@map("rate_plans")
+}
+
+model Season {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @map("property_id") @db.Uuid
+  name       String
+  startDate  DateTime @map("start_date") @db.Date
+  endDate    DateTime @map("end_date") @db.Date
+  // Les saisons se recouvrent : la plus haute priority gagne.
+  priority   Int      @default(0)
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property        @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  prices   RatePlanPrice[]
+
+  @@unique([propertyId, name])
+  @@index([propertyId, startDate, endDate])
+  @@map("seasons")
+}
+
+// Le moteur tarifaire vit dans le domaine applicatif, pas dans l'UI.
+model RatePlanPrice {
+  id            String   @id @default(uuid()) @db.Uuid
+  propertyId    String   @map("property_id") @db.Uuid
+  ratePlanId    String   @map("rate_plan_id") @db.Uuid
+  roomTypeId    String   @map("room_type_id") @db.Uuid
+  seasonId      String?  @map("season_id") @db.Uuid
+  validFrom     DateTime @map("valid_from") @db.Date
+  validTo       DateTime @map("valid_to") @db.Date
+  occupancy     Int      @default(2)
+  amount        BigInt
+  currency      String   @default("XOF") @db.Char(3)
+  minimumNights Int?     @map("minimum_nights")
+  maximumNights Int?     @map("maximum_nights")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  ratePlan RatePlan @relation(fields: [ratePlanId], references: [id], onDelete: Cascade)
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Cascade)
+  season   Season?  @relation(fields: [seasonId], references: [id], onDelete: SetNull)
+
+  @@unique([ratePlanId, roomTypeId, seasonId, validFrom, occupancy])
+  @@index([propertyId, validFrom, validTo])
+  @@map("rate_plan_prices")
+}
+
+model CancellationPolicy {
+  id                 String                  @id @default(uuid()) @db.Uuid
+  propertyId         String                  @map("property_id") @db.Uuid
+  name               String
+  description        String?
+  // Avant cette deadline, l'annulation est gratuite.
+  deadlineHours      Int                     @default(48) @map("deadline_hours")
+  penaltyType        CancellationPenaltyType @default(NONE) @map("penalty_type")
+  penaltyValue       BigInt?
+  noShowPenaltyType  CancellationPenaltyType @default(FIRST_NIGHT) @map("no_show_penalty_type")
+  noShowPenaltyValue BigInt?                 @map("no_show_penalty_value")
+  createdAt          DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property  Property   @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  ratePlans RatePlan[]
+
+  @@unique([propertyId, name])
+  @@map("cancellation_policies")
+}
+
+// ---------------------------------------------------------------------------
+// Clients, documents, préférences (sections 13, 14, 15, 125)
+// ---------------------------------------------------------------------------
+
+// Soft delete uniquement : un client ayant des transactions n'est jamais
+// détruit (section 104).
+model Guest {
+  id               String    @id @default(uuid()) @db.Uuid
+  propertyId       String    @map("property_id") @db.Uuid
+  guestCode        String    @map("guest_code")
+  firstName        String    @map("first_name")
+  lastName         String    @map("last_name")
+  middleName       String?   @map("middle_name")
+  displayName      String?   @map("display_name")
+  gender           String?
+  dateOfBirth      DateTime? @map("date_of_birth") @db.Date
+  nationality      String?
+  country          String?   @db.Char(2)
+  phone            String?
+  secondaryPhone   String?   @map("secondary_phone")
+  email            String?
+  address          String?
+  city             String?
+  region           String?
+  companyId        String?   @map("company_id") @db.Uuid
+  vipLevel         VipLevel  @default(NONE) @map("vip_level")
+  notes            String?
+  marketingConsent Boolean   @default(false) @map("marketing_consent")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz(3)
+
+  property          Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  company           Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  documents         GuestDocument[]
+  preferences       GuestPreference[]
+  reservations      Reservation[]
+  reservationGuests ReservationGuest[]
+  stays             Stay[]
+  folios            Folio[]
+  invoices          Invoice[]
+
+  @@unique([propertyId, guestCode])
+  @@index([propertyId, phone])
+  @@index([propertyId, email])
+  @@index([propertyId, lastName])
+  @@map("guests")
+}
+
+// Données sensibles : jamais affichées en clair hors d'un écran dédié.
+model GuestDocument {
+  id             String    @id @default(uuid()) @db.Uuid
+  propertyId     String    @map("property_id") @db.Uuid
+  guestId        String    @map("guest_id") @db.Uuid
+  documentType   String    @map("document_type")
+  documentNumber String    @map("document_number")
+  issuingCountry String?   @map("issuing_country") @db.Char(2)
+  issueDate      DateTime? @map("issue_date") @db.Date
+  expiryDate     DateTime? @map("expiry_date") @db.Date
+  fileUrl        String?   @map("file_url")
+  verifiedAt     DateTime? @map("verified_at") @db.Timestamptz(3)
+  verifiedBy     String?   @map("verified_by") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  guest    Guest    @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, guestId])
+  @@map("guest_documents")
+}
+
+model GuestPreference {
+  id              String   @id @default(uuid()) @db.Uuid
+  guestId         String   @map("guest_id") @db.Uuid
+  preferenceType  String   @map("preference_type")
+  preferenceValue String   @map("preference_value")
+  notes           String?
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  guest Guest @relation(fields: [guestId], references: [id], onDelete: Cascade)
+
+  @@unique([guestId, preferenceType])
+  @@map("guest_preferences")
+}
+
+// ---------------------------------------------------------------------------
+// Entreprises et agences (sections 16, 17, 117)
+// ---------------------------------------------------------------------------
+
+model Company {
+  id            String         @id @default(uuid()) @db.Uuid
+  propertyId    String         @map("property_id") @db.Uuid
+  name          String
+  legalName     String?        @map("legal_name")
+  rccm          String?
+  taxIdentifier String?        @map("tax_identifier")
+  phone         String?
+  email         String?
+  address       String?
+  city          String?
+  country       String?        @db.Char(2)
+  contactPerson String?        @map("contact_person")
+  // Règle de facturation configurable : la chambre part en entreprise, le
+  // restaurant reste au client (section 114).
+  paymentTerms  String?        @map("payment_terms")
+  creditLimit   BigInt         @default(0) @map("credit_limit")
+  status        PropertyStatus @default(ACTIVE)
+  notes         String?
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  deletedAt     DateTime?      @map("deleted_at") @db.Timestamptz(3)
+
+  property     Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  guests       Guest[]
+  reservations Reservation[]
+  folios       Folio[]
+  invoices     Invoice[]
+
+  @@unique([propertyId, name])
+  @@index([propertyId])
+  @@map("companies")
+}
+
+model Agency {
+  id                 String         @id @default(uuid()) @db.Uuid
+  propertyId         String         @map("property_id") @db.Uuid
+  name               String
+  legalName          String?        @map("legal_name")
+  registrationNumber String?        @map("registration_number")
+  phone              String?
+  email              String?
+  address            String?
+  commissionType     String?        @map("commission_type")
+  commissionValue    BigInt?        @map("commission_value")
+  paymentTerms       String?        @map("payment_terms")
+  status             PropertyStatus @default(ACTIVE)
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property     Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  reservations Reservation[]
+
+  @@unique([propertyId, name])
+  @@index([propertyId])
+  @@map("agencies")
+}
+
+// ---------------------------------------------------------------------------
+// Réservations (sections 18, 19, 20, 124)
+// ---------------------------------------------------------------------------
+
+model Reservation {
+  id                 String            @id @default(uuid()) @db.Uuid
+  propertyId         String            @map("property_id") @db.Uuid
+  reservationNumber  String            @map("reservation_number")
+  source             ReservationSource @default(DIRECT)
+  // Canal d'origine pour le futur channel manager ; external_reference est
+  // la clé chez le distributeur.
+  channel            String?
+  status             ReservationStatus @default(DRAFT)
+  guestId            String            @map("guest_id") @db.Uuid
+  companyId          String?           @map("company_id") @db.Uuid
+  agencyId           String?           @map("agency_id") @db.Uuid
+  arrivalDate        DateTime          @map("arrival_date") @db.Date
+  departureDate      DateTime          @map("departure_date") @db.Date
+  nights             Int
+  adults             Int               @default(1)
+  children           Int               @default(0)
+  infants            Int               @default(0)
+  currency           String            @default("XOF") @db.Char(3)
+  subtotal           BigInt            @default(0)
+  discountAmount     BigInt            @default(0) @map("discount_amount")
+  taxAmount          BigInt            @default(0) @map("tax_amount")
+  totalAmount        BigInt            @default(0) @map("total_amount")
+  // Un acompte n'est pas un revenu tant qu'il n'est pas alloué (section 115).
+  depositRequired    Boolean           @default(false) @map("deposit_required")
+  depositAmount      BigInt            @default(0) @map("deposit_amount")
+  depositDueDate     DateTime?         @map("deposit_due_date") @db.Date
+  specialRequests    String?           @map("special_requests")
+  internalNotes      String?           @map("internal_notes")
+  externalReference  String?           @map("external_reference")
+  createdBy          String?           @map("created_by") @db.Uuid
+  updatedBy          String?           @map("updated_by") @db.Uuid
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime          @updatedAt @map("updated_at") @db.Timestamptz(3)
+  cancelledAt        DateTime?         @map("cancelled_at") @db.Timestamptz(3)
+  cancellationReason String?           @map("cancellation_reason")
+
+  property Property           @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  guest    Guest              @relation(fields: [guestId], references: [id], onDelete: Restrict)
+  company  Company?           @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  agency   Agency?            @relation(fields: [agencyId], references: [id], onDelete: SetNull)
+  rooms    ReservationRoom[]
+  guests   ReservationGuest[]
+  stay     Stay?
+
+  @@unique([propertyId, reservationNumber])
+  @@index([propertyId, arrivalDate])
+  @@index([propertyId, departureDate])
+  @@index([propertyId, status])
+  @@index([propertyId, status, arrivalDate])
+  @@index([guestId])
+  @@index([propertyId, externalReference])
+  @@map("reservations")
+}
+
+// Section 19 : une réservation porte sur un room_type. Le room_id reste
+// nullable tant que la chambre physique n'est pas attribuée.
+model ReservationRoom {
+  id                 String                @id @default(uuid()) @db.Uuid
+  reservationId      String                @map("reservation_id") @db.Uuid
+  propertyId         String                @map("property_id") @db.Uuid
+  roomTypeId         String                @map("room_type_id") @db.Uuid
+  roomId             String?               @map("room_id") @db.Uuid
+  ratePlanId         String                @map("rate_plan_id") @db.Uuid
+  adults             Int                   @default(1)
+  children           Int                   @default(0)
+  arrivalDate        DateTime              @map("arrival_date") @db.Date
+  departureDate      DateTime              @map("departure_date") @db.Date
+  numberOfNights     Int                   @map("number_of_nights")
+  baseAmount         BigInt                @map("base_amount")
+  discountAmount     BigInt                @default(0) @map("discount_amount")
+  taxAmount          BigInt                @default(0) @map("tax_amount")
+  totalAmount        BigInt                @map("total_amount")
+  status             ReservationRoomStatus @default(RESERVED)
+  // Remise conservée et justifiable : le montant reste reconstructible
+  // (section 111).
+  discountType       String?               @map("discount_type")
+  discountValue      BigInt?               @map("discount_value")
+  discountReason     String?               @map("discount_reason")
+  discountApprovedBy String?               @map("discount_approved_by") @db.Uuid
+  createdAt          DateTime              @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  property    Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  roomType    RoomType    @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+  room        Room?       @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  ratePlan    RatePlan    @relation(fields: [ratePlanId], references: [id], onDelete: Restrict)
+
+  @@index([reservationId])
+  @@index([propertyId, roomTypeId, arrivalDate, departureDate])
+  @@index([roomId])
+  @@map("reservation_rooms")
+}
+
+model ReservationGuest {
+  id            String    @id @default(uuid()) @db.Uuid
+  reservationId String    @map("reservation_id") @db.Uuid
+  guestId       String    @map("guest_id") @db.Uuid
+  role          GuestRole @default(ADULT)
+  isPrimary     Boolean   @default(false) @map("is_primary")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  reservation Reservation @relation(fields: [reservationId], references: [id], onDelete: Cascade)
+  guest       Guest       @relation(fields: [guestId], references: [id], onDelete: Restrict)
+
+  @@unique([reservationId, guestId])
+  @@index([guestId])
+  @@map("reservation_guests")
+}
+
+// ---------------------------------------------------------------------------
+// Séjours (sections 21, 22) — un séjour n'est pas une réservation
+// ---------------------------------------------------------------------------
+
+model Stay {
+  id               String     @id @default(uuid()) @db.Uuid
+  propertyId       String     @map("property_id") @db.Uuid
+  stayNumber       String     @map("stay_number")
+  reservationId    String     @map("reservation_id") @db.Uuid
+  primaryGuestId   String     @map("primary_guest_id") @db.Uuid
+  status           StayStatus @default(EXPECTED)
+  actualCheckInAt  DateTime?  @map("actual_check_in_at") @db.Timestamptz(3)
+  actualCheckOutAt DateTime?  @map("actual_check_out_at") @db.Timestamptz(3)
+  plannedCheckIn   DateTime   @map("planned_check_in") @db.Date
+  plannedCheckOut  DateTime   @map("planned_check_out") @db.Date
+  assignedBy       String?    @map("assigned_by") @db.Uuid
+  checkedInBy      String?    @map("checked_in_by") @db.Uuid
+  checkedOutBy     String?    @map("checked_out_by") @db.Uuid
+  createdAt        DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime   @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property     Property    @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  reservation  Reservation @relation(fields: [reservationId], references: [id], onDelete: Restrict)
+  primaryGuest Guest       @relation(fields: [primaryGuestId], references: [id], onDelete: Restrict)
+  rooms        StayRoom[]
+  folios       Folio[]
+
+  @@unique([propertyId, stayNumber])
+  @@unique([reservationId])
+  @@index([propertyId, status])
+  @@index([propertyId, plannedCheckIn, plannedCheckOut])
+  @@map("stays")
+}
+
+// Section 22 : autorise le changement de chambre, l'upgrade et le split.
+model StayRoom {
+  id            String    @id @default(uuid()) @db.Uuid
+  stayId        String    @map("stay_id") @db.Uuid
+  propertyId    String    @map("property_id") @db.Uuid
+  roomId        String    @map("room_id") @db.Uuid
+  roomTypeId    String    @map("room_type_id") @db.Uuid
+  arrivalDate   DateTime  @map("arrival_date") @db.Date
+  departureDate DateTime  @map("departure_date") @db.Date
+  assignedAt    DateTime  @default(now()) @map("assigned_at") @db.Timestamptz(3)
+  assignedBy    String?   @map("assigned_by") @db.Uuid
+  releasedAt    DateTime? @map("released_at") @db.Timestamptz(3)
+
+  stay     Stay     @relation(fields: [stayId], references: [id], onDelete: Cascade)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  room     Room     @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  roomType RoomType @relation(fields: [roomTypeId], references: [id], onDelete: Restrict)
+
+  @@index([stayId])
+  @@index([propertyId, roomId, arrivalDate, departureDate])
+  @@index([roomId])
+  @@map("stay_rooms")
+}
+
+// ---------------------------------------------------------------------------
+// Folios et lignes de folio (sections 23, 24)
+// ---------------------------------------------------------------------------
+
+model Folio {
+  id            String      @id @default(uuid()) @db.Uuid
+  propertyId    String      @map("property_id") @db.Uuid
+  folioNumber   String      @map("folio_number")
+  stayId        String      @map("stay_id") @db.Uuid
+  guestId       String?     @map("guest_id") @db.Uuid
+  companyId     String?     @map("company_id") @db.Uuid
+  status        FolioStatus @default(OPEN)
+  currency      String      @default("XOF") @db.Char(3)
+  openedAt      DateTime    @default(now()) @map("opened_at") @db.Timestamptz(3)
+  closedAt      DateTime?   @map("closed_at") @db.Timestamptz(3)
+  // Dénormalisé pour éviter une agrégation à chaque affichage. Recalculé
+  // dans la même transaction que les écritures.
+  balance       BigInt      @default(0)
+  // Solde en faveur du client issu d'un trop-perçu (section 116).
+  creditBalance BigInt      @default(0) @map("credit_balance")
+  creditLimit   BigInt      @default(0) @map("credit_limit")
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property    Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  stay        Stay                @relation(fields: [stayId], references: [id], onDelete: Restrict)
+  guest       Guest?              @relation(fields: [guestId], references: [id], onDelete: SetNull)
+  company     Company?            @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  items       FolioItem[]
+  allocations PaymentAllocation[]
+  invoices    Invoice[]
+
+  @@unique([propertyId, folioNumber])
+  @@index([stayId])
+  @@index([propertyId, status])
+  @@map("folios")
+}
+
+// Section 24 : jamais de suppression physique. Une correction passe par un
+// void autorisé ou une écriture compensatoire.
+model FolioItem {
+  id              String        @id @default(uuid()) @db.Uuid
+  folioId         String        @map("folio_id") @db.Uuid
+  propertyId      String        @map("property_id") @db.Uuid
+  // Date d'exploitation : distincte du timestamp technique (section 105).
+  businessDate    DateTime      @map("business_date") @db.Date
+  transactionDate DateTime      @default(now()) @map("transaction_date") @db.Timestamptz(3)
+  type            FolioItemType
+  category        String?
+  description     String
+  quantity        Decimal       @default(1) @db.Decimal(12, 3)
+  unitAmount      BigInt        @map("unit_amount")
+  discountAmount  BigInt        @default(0) @map("discount_amount")
+  netAmount       BigInt        @map("net_amount")
+  taxAmount       BigInt        @default(0) @map("tax_amount")
+  grossAmount     BigInt        @map("gross_amount")
+  currency        String        @default("XOF") @db.Char(3)
+  referenceType   String?       @map("reference_type")
+  referenceId     String?       @map("reference_id") @db.Uuid
+  postedBy        String?       @map("posted_by") @db.Uuid
+  // Clé d'idempotence du posting nocturne : garantit qu'un night audit
+  // relancé ne duplique pas les charges (section 55).
+  idempotencyKey  String?       @map("idempotency_key")
+  voidedAt        DateTime?     @map("voided_at") @db.Timestamptz(3)
+  voidedBy        String?       @map("voided_by") @db.Uuid
+  voidReason      String?       @map("void_reason")
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  folio    Folio    @relation(fields: [folioId], references: [id], onDelete: Restrict)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([folioId])
+  @@index([folioId, businessDate])
+  @@index([propertyId, businessDate])
+  @@index([idempotencyKey])
+  @@map("folio_items")
+}
+
+// ---------------------------------------------------------------------------
+// Paiements, affectations, remboursements (sections 25, 26, 27)
+// ---------------------------------------------------------------------------
+
+model Payment {
+  id                String        @id @default(uuid()) @db.Uuid
+  propertyId        String        @map("property_id") @db.Uuid
+  paymentNumber     String        @map("payment_number")
+  // Folio principal : le reste est ventilé via PaymentAllocation.
+  folioId           String?       @map("folio_id") @db.Uuid
+  amount            BigInt
+  currency          String        @default("XOF") @db.Char(3)
+  method            PaymentMethod
+  status            PaymentStatus @default(COMPLETED)
+  reference         String?
+  externalReference String?       @map("external_reference")
+  paidAt            DateTime      @default(now()) @map("paid_at") @db.Timestamptz(3)
+  receivedBy        String?       @map("received_by") @db.Uuid
+  cashSessionId     String?       @map("cash_session_id") @db.Uuid
+  notes             String?
+  // Section 70 : deux envois de la même requête ne créent qu'un paiement.
+  idempotencyKey    String?       @map("idempotency_key")
+  createdAt         DateTime      @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime      @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property    Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  cashSession CashSession?        @relation(fields: [cashSessionId], references: [id], onDelete: SetNull)
+  allocations PaymentAllocation[]
+  refunds     Refund[]
+
+  @@unique([propertyId, paymentNumber])
+  @@index([folioId])
+  @@index([propertyId, paidAt])
+  @@index([propertyId, status, paidAt])
+  @@index([idempotencyKey])
+  @@map("payments")
+}
+
+// Section 26 : un paiement peut couvrir plusieurs folios.
+model PaymentAllocation {
+  id        String   @id @default(uuid()) @db.Uuid
+  paymentId String   @map("payment_id") @db.Uuid
+  folioId   String   @map("folio_id") @db.Uuid
+  amount    BigInt
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  payment Payment @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  folio   Folio   @relation(fields: [folioId], references: [id], onDelete: Restrict)
+
+  @@unique([paymentId, folioId])
+  @@index([folioId])
+  @@map("payment_allocations")
+}
+
+// Section 27 : un remboursement important exige une permission dédiée.
+model Refund {
+  id          String       @id @default(uuid()) @db.Uuid
+  propertyId  String       @map("property_id") @db.Uuid
+  paymentId   String       @map("payment_id") @db.Uuid
+  amount      BigInt
+  reason      String?
+  status      RefundStatus @default(PENDING)
+  reference   String?
+  approvedBy  String?      @map("approved_by") @db.Uuid
+  processedBy String?      @map("processed_by") @db.Uuid
+  createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  payment  Payment  @relation(fields: [paymentId], references: [id], onDelete: Restrict)
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId])
+  @@index([propertyId, status])
+  @@map("refunds")
+}
+
+// ---------------------------------------------------------------------------
+// Factures (sections 28, 29)
+// ---------------------------------------------------------------------------
+
+// Règle 81/7 : une facture finalisée n'est plus librement modifiable.
+model Invoice {
+  id             String               @id @default(uuid()) @db.Uuid
+  propertyId     String               @map("property_id") @db.Uuid
+  invoiceNumber  String               @map("invoice_number")
+  folioId        String?              @map("folio_id") @db.Uuid
+  guestId        String?              @map("guest_id") @db.Uuid
+  companyId      String?              @map("company_id") @db.Uuid
+  status         InvoiceStatus        @default(DRAFT)
+  invoiceType    InvoiceType          @default(NORMAL) @map("invoice_type")
+  currency       String               @default("XOF") @db.Char(3)
+  subtotal       BigInt               @default(0)
+  discountAmount BigInt               @default(0) @map("discount_amount")
+  taxAmount      BigInt               @default(0) @map("tax_amount")
+  totalAmount    BigInt               @default(0) @map("total_amount")
+  amountPaid     BigInt               @default(0) @map("amount_paid")
+  balanceDue     BigInt               @default(0) @map("balance_due")
+  issuedAt       DateTime?            @map("issued_at") @db.Timestamptz(3)
+  dueAt          DateTime?            @map("due_at") @db.Date
+  fneStatus      FneSubmissionStatus? @map("fne_status")
+  fneReference   String?              @map("fne_reference")
+  fneNumber      String?              @map("fne_number")
+  createdBy      String?              @map("created_by") @db.Uuid
+  createdAt      DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property    Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  folio       Folio?        @relation(fields: [folioId], references: [id], onDelete: SetNull)
+  guest       Guest?        @relation(fields: [guestId], references: [id], onDelete: SetNull)
+  company     Company?      @relation(fields: [companyId], references: [id], onDelete: SetNull)
+  items       InvoiceItem[]
+  fneDocument FneDocument?
+
+  @@unique([propertyId, invoiceNumber])
+  @@index([propertyId, issuedAt])
+  @@index([propertyId, status])
+  @@map("invoices")
+}
+
+model InvoiceItem {
+  id             String  @id @default(uuid()) @db.Uuid
+  invoiceId      String  @map("invoice_id") @db.Uuid
+  description    String
+  quantity       Decimal @default(1) @db.Decimal(12, 3)
+  unitPrice      BigInt  @map("unit_price")
+  discountAmount BigInt  @default(0) @map("discount_amount")
+  netAmount      BigInt  @map("net_amount")
+  taxAmount      BigInt  @default(0) @map("tax_amount")
+  grossAmount    BigInt  @map("gross_amount")
+  taxCode        String? @map("tax_code")
+  referenceType  String? @map("reference_type")
+  referenceId    String? @map("reference_id") @db.Uuid
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+
+  @@index([invoiceId])
+  @@map("invoice_items")
+}
+
+// ---------------------------------------------------------------------------
+// Taxes (sections 30, 31, 32, 126, 127)
+// ---------------------------------------------------------------------------
+
+// Moteur de taxation versionné par date d'effet. Aucun taux dans l'UI.
+model TaxRule {
+  id                String               @id @default(uuid()) @db.Uuid
+  propertyId        String               @map("property_id") @db.Uuid
+  name              String
+  code              String
+  taxType           String               @map("tax_type")
+  jurisdiction      NightTaxJurisdiction @default(NATIONAL)
+  calculationMethod TaxCalculationMethod @default(PERCENTAGE) @map("calculation_method")
+  rate              Decimal?             @db.Decimal(7, 4)
+  fixedAmount       BigInt?              @map("fixed_amount")
+  isInclusive       Boolean              @default(false) @map("is_inclusive")
+  effectiveFrom     DateTime             @map("effective_from") @db.Date
+  effectiveTo       DateTime?            @map("effective_to") @db.Date
+  conditions        Json?
+  isActive          Boolean              @default(true) @map("is_active")
+  createdAt         DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, code])
+  @@index([propertyId, isActive, effectiveFrom])
+  @@map("tax_rules")
+}
+
+// Section 31 : la taxe communale de nuitée est une règle datée, indexée sur
+// le classement de l'établissement. Les montants 2026 (500 / 1000 / 1500 /
+// 2000 FCFA) sont des données de configuration, jamais du code.
+model NightTaxConfiguration {
+  id                  String               @id @default(uuid()) @db.Uuid
+  propertyId          String               @map("property_id") @db.Uuid
+  hotelClassification HotelClassification  @map("hotel_classification")
+  amountPerNight      BigInt               @map("amount_per_night")
+  jurisdictionType    NightTaxJurisdiction @default(MUNICIPAL) @map("jurisdiction_type")
+  // Bénéficiaire du reversement : la commune n'est pas toujours identique.
+  beneficiaryType     String               @map("beneficiary_type")
+  collectionPeriod    String               @default("MONTHLY") @map("collection_period")
+  effectiveFrom       DateTime             @map("effective_from") @db.Date
+  effectiveTo         DateTime?            @map("effective_to") @db.Date
+  isActive            Boolean              @default(true) @map("is_active")
+  createdAt           DateTime             @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, hotelClassification, effectiveFrom])
+  @@index([propertyId, isActive])
+  @@map("night_tax_configurations")
+}
+
+// Section 127 : calculated / collected / declared / submitted / paid sont
+// cinq états distincts. Ce tableau les suit sans les confondre.
+model TaxObligation {
+  id             String              @id @default(uuid()) @db.Uuid
+  propertyId     String              @map("property_id") @db.Uuid
+  taxType        String              @map("tax_type")
+  periodStart    DateTime            @map("period_start") @db.Date
+  periodEnd      DateTime            @map("period_end") @db.Date
+  amountDue      BigInt              @default(0) @map("amount_due")
+  amountDeclared BigInt              @default(0) @map("amount_declared")
+  amountPaid     BigInt              @default(0) @map("amount_paid")
+  status         TaxObligationStatus @default(PENDING)
+  dueDate        DateTime?           @map("due_date") @db.Date
+  submittedAt    DateTime?           @map("submitted_at") @db.Timestamptz(3)
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, taxType, periodStart, periodEnd])
+  @@index([propertyId, status])
+  @@map("tax_obligations")
+}
+
+// ---------------------------------------------------------------------------
+// FNE (section 33) — la certification ne dépend que de la réponse officielle
+// ---------------------------------------------------------------------------
+
+model FneDocument {
+  id                     String              @id @default(uuid()) @db.Uuid
+  propertyId             String              @map("property_id") @db.Uuid
+  invoiceId              String              @unique @map("invoice_id") @db.Uuid
+  externalReference      String?             @map("external_reference")
+  submissionStatus       FneSubmissionStatus @default(PENDING)
+  fneNumber              String?             @map("fne_number")
+  certificationReference String?             @map("certification_reference")
+  qrCodeData             String?             @map("qr_code_data")
+  submittedAt            DateTime?           @map("submitted_at") @db.Timestamptz(3)
+  certifiedAt            DateTime?           @map("certified_at") @db.Timestamptz(3)
+  rejectedAt             DateTime?           @map("rejected_at") @db.Timestamptz(3)
+  rejectionReason        String?             @map("rejection_reason")
+  attempts               Int                 @default(0)
+  submittedBy            String?             @map("submitted_by") @db.Uuid
+  createdAt              DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt              DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property    Property               @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  invoice     Invoice                @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  submitter   User?                  @relation("FneSubmittedBy", fields: [submittedBy], references: [id], onDelete: SetNull)
+  attemptsLog FneSubmissionAttempt[]
+
+  @@index([propertyId, submissionStatus])
+  @@map("fne_documents")
+}
+
+// Journal des tentatives : indispensable pour diagnostiquer un rejet.
+model FneSubmissionAttempt {
+  id                    String              @id @default(uuid()) @db.Uuid
+  fneDocumentId         String              @map("fne_document_id") @db.Uuid
+  attemptNumber         Int                 @map("attempt_number")
+  requestId             String?             @map("request_id")
+  correlationId         String?             @map("correlation_id")
+  status                FneSubmissionStatus
+  responseCode          Int?                @map("response_code")
+  // Réponse assainie : jamais de données sensibles ni de secret.
+  responseBodySanitized String?             @map("response_body_sanitized") @db.Text
+  errorCode             String?             @map("error_code")
+  errorMessage          String?             @map("error_message")
+  createdAt             DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  fneDocument FneDocument @relation(fields: [fneDocumentId], references: [id], onDelete: Cascade)
+
+  @@unique([fneDocumentId, attemptNumber])
+  @@index([fneDocumentId, createdAt])
+  @@map("fne_submission_attempts")
+}
+
+// ---------------------------------------------------------------------------
+// Caisse (sections 34, 56)
+// ---------------------------------------------------------------------------
+
+model CashRegister {
+  id         String   @id @default(uuid()) @db.Uuid
+  propertyId String   @map("property_id") @db.Uuid
+  name       String
+  code       String
+  location   String?
+  isActive   Boolean  @default(true) @map("is_active")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property      @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  sessions CashSession[]
+
+  @@unique([propertyId, code])
+  @@map("cash_registers")
+}
+
+model CashSession {
+  id              String            @id @default(uuid()) @db.Uuid
+  cashRegisterId  String            @map("cash_register_id") @db.Uuid
+  propertyId      String            @map("property_id") @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  openedAt        DateTime          @default(now()) @map("opened_at") @db.Timestamptz(3)
+  openingBalance  BigInt            @default(0) @map("opening_balance")
+  closingBalance  BigInt?           @map("closing_balance")
+  expectedBalance BigInt?           @map("expected_balance")
+  // Écart constaté à la clôture ; une variance exige une justification.
+  difference      BigInt?
+  varianceReason  String?           @map("variance_reason")
+  status          CashSessionStatus @default(OPEN)
+  closedAt        DateTime?         @map("closed_at") @db.Timestamptz(3)
+  closedBy        String?           @map("closed_by") @db.Uuid
+
+  cashRegister CashRegister   @relation(fields: [cashRegisterId], references: [id], onDelete: Restrict)
+  property     Property       @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  user         User           @relation(fields: [userId], references: [id], onDelete: Restrict)
+  movements    CashMovement[]
+  payments     Payment[]
+
+  @@index([propertyId, status])
+  @@index([cashRegisterId, status])
+  @@map("cash_sessions")
+}
+
+model CashMovement {
+  id            String           @id @default(uuid()) @db.Uuid
+  cashSessionId String           @map("cash_session_id") @db.Uuid
+  type          CashMovementType
+  amount        BigInt
+  reason        String?
+  referenceType String?          @map("reference_type")
+  referenceId   String?          @map("reference_id") @db.Uuid
+  createdBy     String?          @map("created_by") @db.Uuid
+  createdAt     DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  cashSession CashSession @relation(fields: [cashSessionId], references: [id], onDelete: Restrict)
+
+  @@index([cashSessionId, createdAt])
+  @@map("cash_movements")
+}
+
+// ---------------------------------------------------------------------------
+// Housekeeping et maintenance (sections 35, 36, 37, 38)
+// ---------------------------------------------------------------------------
+
+model HousekeepingTask {
+  id            String                 @id @default(uuid()) @db.Uuid
+  propertyId    String                 @map("property_id") @db.Uuid
+  roomId        String                 @map("room_id") @db.Uuid
+  taskType      HousekeepingTaskType   @map("task_type")
+  priority      TaskPriority           @default(NORMAL)
+  status        HousekeepingTaskStatus @default(PENDING)
+  assignedTo    String?                @map("assigned_to") @db.Uuid
+  startedAt     DateTime?              @map("started_at") @db.Timestamptz(3)
+  completedAt   DateTime?              @map("completed_at") @db.Timestamptz(3)
+  verifiedAt    DateTime?              @map("verified_at") @db.Timestamptz(3)
+  verifiedBy    String?                @map("verified_by") @db.Uuid
+  // Évite de créer deux fois la même tâche pour un même checkout.
+  referenceType String?                @map("reference_type")
+  referenceId   String?                @map("reference_id") @db.Uuid
+  notes         String?
+  createdAt     DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  room     Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([propertyId, status])
+  @@index([roomId, status])
+  @@index([propertyId, assignedTo, status])
+  @@map("housekeeping_tasks")
+}
+
+model Asset {
+  id           String      @id @default(uuid()) @db.Uuid
+  propertyId   String      @map("property_id") @db.Uuid
+  roomId       String?     @map("room_id") @db.Uuid
+  name         String
+  category     String?
+  serialNumber String?     @map("serial_number")
+  manufacturer String?
+  purchaseDate DateTime?   @map("purchase_date") @db.Date
+  warrantyEnd  DateTime?   @map("warranty_end") @db.Date
+  status       AssetStatus @default(IN_SERVICE)
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime    @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property            @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  room     Room?               @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  tickets  MaintenanceTicket[]
+
+  @@index([propertyId, status])
+  @@map("assets")
+}
+
+model MaintenanceTicket {
+  id            String                  @id @default(uuid()) @db.Uuid
+  propertyId    String                  @map("property_id") @db.Uuid
+  roomId        String?                 @map("room_id") @db.Uuid
+  assetId       String?                 @map("asset_id") @db.Uuid
+  title         String
+  description   String?
+  priority      TaskPriority            @default(NORMAL)
+  status        MaintenanceTicketStatus @default(OPEN)
+  reportedBy    String?                 @map("reported_by") @db.Uuid
+  assignedTo    String?                 @map("assigned_to") @db.Uuid
+  estimatedCost BigInt?                 @map("estimated_cost")
+  actualCost    BigInt?                 @map("actual_cost")
+  openedAt      DateTime                @default(now()) @map("opened_at") @db.Timestamptz(3)
+  resolvedAt    DateTime?               @map("resolved_at") @db.Timestamptz(3)
+  closedAt      DateTime?               @map("closed_at") @db.Timestamptz(3)
+  createdAt     DateTime                @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt     DateTime                @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+  room     Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  asset    Asset?   @relation(fields: [assetId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId, status])
+  @@index([roomId])
+  @@map("maintenance_tickets")
+}
+
+// ---------------------------------------------------------------------------
+// Night audit et métriques (sections 55, 106)
+// ---------------------------------------------------------------------------
+
+// Section 55 : l'exécution est idempotente. Une ligne par property_date
+// garantit qu'un second lancement ne peut pas poster deux fois les charges.
+model NightAudit {
+  id                String           @id @default(uuid()) @db.Uuid
+  propertyId        String           @map("property_id") @db.Uuid
+  businessDate      DateTime         @map("business_date") @db.Date
+  status            NightAuditStatus @default(PENDING)
+  startedAt         DateTime?        @map("started_at") @db.Timestamptz(3)
+  completedAt       DateTime?        @map("completed_at") @db.Timestamptz(3)
+  startedBy         String?          @map("started_by") @db.Uuid
+  completedBy       String?          @map("completed_by") @db.Uuid
+  totalRoomRevenue  BigInt           @default(0) @map("total_room_revenue")
+  totalOtherRevenue BigInt           @default(0) @map("total_other_revenue")
+  totalTax          BigInt           @default(0) @map("total_tax")
+  totalPayments     BigInt           @default(0) @map("total_payments")
+  variance          BigInt           @default(0)
+  errorSummary      Json?            @map("error_summary")
+  createdAt         DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt         DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, businessDate])
+  @@index([propertyId, status])
+  @@map("night_audits")
+}
+
+// Section 106 : agrégats journaliers pour ne pas recalculer les KPI à chaque
+// chargement du dashboard.
+model DailyHotelMetric {
+  id              String   @id @default(uuid()) @db.Uuid
+  propertyId      String   @map("property_id") @db.Uuid
+  businessDate    DateTime @map("business_date") @db.Date
+  availableRooms  Int      @default(0) @map("available_rooms")
+  occupiedRooms   Int      @default(0) @map("occupied_rooms")
+  outOfOrderRooms Int      @default(0) @map("out_of_order_rooms")
+  occupancyRate   Decimal  @default(0) @map("occupancy_rate") @db.Decimal(6, 4)
+  roomRevenue     BigInt   @default(0) @map("room_revenue")
+  otherRevenue    BigInt   @default(0) @map("other_revenue")
+  grossRevenue    BigInt   @default(0) @map("gross_revenue")
+  taxRevenue      BigInt   @default(0) @map("tax_revenue")
+  adr             BigInt   @default(0)
+  revpar          BigInt   @default(0)
+  payments        BigInt   @default(0)
+  outstanding     BigInt   @default(0)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  property Property @relation(fields: [propertyId], references: [id], onDelete: Cascade)
+
+  @@unique([propertyId, businessDate])
+  @@map("daily_hotel_metrics")
+}
+
+// ---------------------------------------------------------------------------
+// Journal d'audit (section 42)
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  propertyId     String?  @map("property_id") @db.Uuid
+  userId         String?  @map("user_id") @db.Uuid
+  action         String
+  resource       String
+  resourceId     String?  @map("resource_id") @db.Uuid
+  // État avant/après : la trace doit permettre de reconstituer l'action.
+  beforeData     Json?    @map("before_data")
+  afterData      Json?    @map("after_data")
+  ipAddress      String?  @map("ip_address")
+  userAgent      String?  @map("user_agent")
+  correlationId  String?  @map("correlation_id")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  property     Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([propertyId, createdAt])
+  @@index([organizationId, createdAt])
+  @@index([resource, resourceId])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+// ---------------------------------------------------------------------------
+// Infrastructure technique : idempotence, outbox, notifications (67, 70, 96)
+// ---------------------------------------------------------------------------
+
+// Section 70 : la clé rend la répétition d'une mutation sans effet.
+model IdempotencyKey {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  propertyId     String?  @map("property_id") @db.Uuid
+  key            String
+  operation      String
+  requestHash    String   @map("request_hash")
+  responseStatus Int?     @map("response_status")
+  responseBody   Json?    @map("response_body")
+  expiresAt      DateTime @map("expires_at") @db.Timestamptz(3)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  property     Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+
+  @@unique([organizationId, key, operation])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
+}
+
+// Section 96 : l'événement est écrit dans la même transaction que l'écriture
+// métier, puis traité par un worker. Aucun événement n'est perdu.
+model OutboxEvent {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  propertyId     String?      @map("property_id") @db.Uuid
+  eventType      String       @map("event_type")
+  aggregateType  String       @map("aggregate_type")
+  aggregateId    String?      @map("aggregate_id") @db.Uuid
+  payload        Json
+  status         OutboxStatus @default(PENDING)
+  attempts       Int          @default(0)
+  availableAt    DateTime     @default(now()) @map("available_at") @db.Timestamptz(3)
+  processedAt    DateTime?    @map("processed_at") @db.Timestamptz(3)
+  lastError      String?      @map("last_error")
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  property     Property?    @relation(fields: [propertyId], references: [id], onDelete: SetNull)
+
+  @@index([status, availableAt])
+  @@index([propertyId, createdAt])
+  @@map("outbox_events")
+}
+
+model Notification {
+  id         String              @id @default(uuid()) @db.Uuid
+  propertyId String              @map("property_id") @db.Uuid
+  userId     String?             @map("user_id") @db.Uuid
+  channel    NotificationChannel @default(IN_APP)
+  eventType  String              @map("event_type")
+  title      String
+  body       String?
+  payload    Json?
+  readAt     DateTime?           @map("read_at") @db.Timestamptz(3)
+  sentAt     DateTime?           @map("sent_at") @db.Timestamptz(3)
+  failedAt   DateTime?           @map("failed_at") @db.Timestamptz(3)
+  attempts   Int                 @default(0)
+  createdAt  DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([propertyId, readAt])
+  @@map("notifications")
+}
