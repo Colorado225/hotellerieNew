@@ -118,6 +118,11 @@ jobs:
       - name: Verify double booking protection
         run: npm run db:verify:double-booking
 
+      # Réconciliation de caisse : l'écart entre l'attendu et le compté
+      # doit être exact (section 56).
+      - name: Verify cash reconciliation
+        run: npm run db:verify:cash
+
       # Workflows de séjour : check-in, check-out, tâches housekeeping,
       # idempotence du paiement (sections 49, 54, 135).
       - name: Verify stay workflow
