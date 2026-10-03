@@ -1966,3 +1966,11 @@ CREATE TRIGGER "invoices_no_physical_delete"
   FOR EACH ROW
   EXECUTE FUNCTION prevent_financial_row_deletion();
 
+-- Mode ALWAYS : un trigger en mode ENABLE n'est pas exécuté pour le rôle
+-- propriétaire de la table. L'application utilise précisément ce rôle, la
+-- garantie d'intégrité comptable serait donc contournable. `ENABLE ALWAYS`
+-- exécute le trigger y compris pour le propriétaire.
+ALTER TABLE "folio_items" ENABLE ALWAYS TRIGGER "folio_items_no_physical_delete";
+ALTER TABLE "payments" ENABLE ALWAYS TRIGGER "payments_no_physical_delete";
+ALTER TABLE "invoices" ENABLE ALWAYS TRIGGER "invoices_no_physical_delete";
+
