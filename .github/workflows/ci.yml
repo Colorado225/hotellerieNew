@@ -118,6 +118,11 @@ jobs:
       - name: Verify double booking protection
         run: npm run db:verify:double-booking
 
+      # Couche FNE : succès, rejet, timeout, erreur 500, requête en double
+      # (sections 33 et 139).
+      - name: Verify FNE provider
+        run: npm run db:verify:fne
+
       # Réconciliation de caisse : l'écart entre l'attendu et le compté
       # doit être exact (section 56).
       - name: Verify cash reconciliation
