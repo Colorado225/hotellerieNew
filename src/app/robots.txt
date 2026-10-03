@@ -1,66 +1,24 @@
+# LagoonKey est un PMS privé : aucune page ne doit être indexée.
+# Le contenu opérationnel d'un hôtel (réservations, clients, folios) n'a
+# aucune raison d'apparaître dans un moteur de recherche.
+
 User-Agent: *
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
-
-User-Agent: OAI-SearchBot
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
-
-User-Agent: Claude-SearchBot
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
-
-User-Agent: Amzn-SearchBot
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
+Disallow: /
 
 User-Agent: GPTBot
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
+Disallow: /
 
 User-Agent: ClaudeBot
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
-
-User-Agent: Claude-Web
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
-
-User-Agent: anthropic-ai
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
-
-User-Agent: Google-Extended
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
-
-User-Agent: Amazonbot
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
-
-User-Agent: Bytespider
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
+Disallow: /
 
 User-Agent: CCBot
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
+Disallow: /
 
-User-Agent: Applebot-Extended
-Allow: /
-Disallow: /api/
-Content-Signal: ai-train=yes, search=yes, ai-input=yes
+User-Agent: Google-Extended
+Disallow: /
 
-Sitemap: https://lagoonkey.com/sitemap.xml
+User-Agent: anthropic-ai
+Disallow: /
+
+User-Agent: Bytespider
+Disallow: /
