@@ -24,6 +24,7 @@
     "db:verify:tenancy": "tsx prisma/verify-tenant-isolation.ts",
     "db:verify:rates": "tsx prisma/verify-rate-engine.ts",
     "db:verify:double-booking": "tsx prisma/verify-double-booking.ts",
+    "db:verify:stay-flow": "tsx prisma/verify-stay-flow.ts",
     "db:cleanup:test-data": "tsx prisma/cleanup-test-data.ts",
     "db:test:setup": "prisma migrate deploy && tsx prisma/seed.ts",
     "services:up": "docker compose up -d",
