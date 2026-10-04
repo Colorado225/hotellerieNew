@@ -53,6 +53,25 @@ enum UserStatus {
   DISABLED
 }
 
+// Cycle de vie d'une demande d'accès (pages.md section 12).
+//
+// Une demande n'est PAS un compte : aucun rôle ni établissement ne lui sont
+// rattachés tant qu'elle n'a pas été instruite. C'est ce qui distingue le
+// formulaire public de l'attribution d'accès, et ce qui empêche un visiteur
+// d'obtenir une session par simple auto-inscription.
+enum AccessRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+enum AccessRequestType {
+  OWNER
+  MANAGER
+  AGENT
+}
+
 enum RoleCode {
   SUPER_ADMIN
   OWNER
@@ -494,6 +513,7 @@ model User {
   cashSessions CashSession[]
   auditLogs    AuditLog[]
   fneDocuments FneDocument[] @relation("FneSubmittedBy")
+  accessRequests AccessRequest[]
 
   @@unique([organizationId, email])
   @@index([organizationId])
@@ -1805,6 +1825,56 @@ model IdempotencyKey {
   @@unique([organizationId, key, operation])
   @@index([expiresAt])
   @@map("idempotency_keys")
+}
+
+/**
+ * Demande d'accès en attente d'instruction.
+ *
+ * Écrite par le formulaire public `/register`, sans session ni tenant : c'est la
+ * seule table du schéma accessible hors contexte RLS, ce qui est délibéré — une
+ * demande arrive précisément *avant* que l'on sache à quel établissement elle
+ * se rattache.
+ *
+ * Contraintes de sécurité :
+ *
+ * - aucun rôle n'est créé au dépôt de la demande ; un compte ne naît qu'après
+ *   approbation, avec un établissement et un rôle choisis par son dirigeant ;
+ * - le mot de passe est stocké ici sous forme de hash, jamais en clair, et n'est
+ *   repris que lors de l'approbation ;
+ * - l'unicité de l'email empêche le spam par répétition et permet au
+ *   contributeur de savoir qu'une demande est déjà en cours.
+ *
+ * Les identifiants restent donc en attente, exactement comme le veut le modèle
+ * d'accès du PMS.
+ */
+model AccessRequest {
+  id           String              @id @default(uuid()) @db.Uuid
+  firstName    String              @map("first_name")
+  lastName     String              @map("last_name")
+  email        String
+  // Hash Argon2id du mot de passe saisi. Jamais journalisé, jamais renvoyé.
+  passwordHash String              @map("password_hash")
+  type         AccessRequestType
+  status       AccessRequestStatus @default(PENDING)
+  // Renseigné lors de l'approbation : c'est le compte alors créé.
+  userId       String?             @map("user_id") @db.Uuid
+  // Permet de router la demande vers le bon établissement sans l'exposer au public.
+  propertyId   String?             @map("property_id") @db.Uuid
+  reviewedBy   String?             @map("reviewed_by") @db.Uuid
+  reviewedAt   DateTime?           @map("reviewed_at") @db.Timestamptz(3)
+  rejectionReason String?           @map("rejection_reason")
+  createdAt    DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt    DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Une seule demande en attente par adresse : les soumissions suivantes sont
+  // refusées, ce qui limite le spam sans interdire une nouvelle demande après
+  // rejet ou expiration.
+  @@index([email, status])
+  @@index([status, createdAt])
+  @@index([propertyId])
+  @@map("access_requests")
 }
 
 // Section 96 : l'événement est écrit dans la même transaction que l'écriture

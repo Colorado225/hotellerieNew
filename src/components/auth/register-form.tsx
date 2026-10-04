@@ -2,7 +2,7 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Mail, User } from "lucide-react";
+import { Check, Mail, User } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Controller, useForm } from "react-hook-form";
@@ -68,6 +68,12 @@ export function RegisterForm() {
   const reducedMotion = useReducedMotion();
   const [step, setStep] = useState(0);
 
+  // États de soumission : `pending` pendant l'appel, `sent` une fois la demande
+  // enregistrée. `error` porte un message déjà prêt à afficher.
+  const [pending, setPending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const form = useForm<Values>({
     resolver: zodResolver(schema),
     mode: "onTouched",
@@ -81,7 +87,60 @@ export function RegisterForm() {
     },
   });
 
-  const { trigger, formState } = form;
+  const { trigger, formState, getValues, reset } = form;
+
+  /**
+   * Dépose la demande d'accès.
+   *
+   * Le mot de passe est transmis au format clair sur cette seule requête, en
+   * HTTPS, puis haché côté serveur. Il ne doit surtout pas être journalisé :
+   * la réponse du service est volontairement ignorée au-delà du message.
+   */
+  async function onSubmit() {
+    setPending(true);
+    setError(null);
+
+    const values = getValues();
+
+    try {
+      const response = await fetch("/api/auth/access-request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          firstName: values.firstName,
+          lastName: values.lastName,
+          email: values.email,
+          password: values.password,
+          type: values.accountType,
+        }),
+      });
+
+      const payload = (await response.json()) as { message?: string };
+
+      if (response.status === 409) {
+        // Compte existant : l'information ne peut pas être divulguée, mais
+        // l'utilisateur sait qu'il possède déjà un accès.
+        setError(payload.message ?? "Un compte existe déjà pour cette adresse.");
+        setPending(false);
+        return;
+      }
+
+      if (!response.ok) {
+        setError(payload.message ?? "La demande n'a pas pu être enregistrée.");
+        setPending(false);
+        return;
+      }
+
+      // Confirmation : le formulaire laisse place à un état de succès. Les
+      // valeurs sont effacées pour ne pas laisser le mot de passe en mémoire
+      // plus longtemps que nécessaire.
+      reset();
+      setSent(true);
+    } catch {
+      setError("Le service est injoignable. Réessayez dans un instant.");
+      setPending(false);
+    }
+  }
 
   /** Les champs contrôlés par l'étape courante. */
   const stepFields = [
@@ -148,11 +207,41 @@ export function RegisterForm() {
           </p>
         </motion.div>
 
-        <motion.form
-          noValidate
-          className="space-y-5"
-          variants={reducedMotion ? undefined : itemVariants}
-        >
+        {/* Confirmation (section 28, état `success`). Le formulaire disparaît au profit
+            d'un récapitulatif : la demande est enregistrée, mais aucun compte
+            n'existe tant qu'un établissement ne l'a pas approuvée. */}
+        {sent ? (
+          <motion.div
+            className="space-y-5 text-center"
+            initial={reducedMotion ? false : { opacity: 0, scale: 0.96 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={reducedMotion ? undefined : softTransition}
+            role="status"
+          >
+            <span className="mx-auto grid size-12 place-items-center rounded-full border border-[#F5B85B]/30 bg-[#F5B85B]/10">
+              <Check className="size-5 text-[#F5B85B]" aria-hidden="true" />
+            </span>
+            <div className="space-y-2">
+              <h3 className="text-[17px] font-semibold text-white">Demande enregistrée</h3>
+              <p className="text-[13px] leading-relaxed text-white/55">
+                L&apos;établissement sera notifié. Vous pourrez vous connecter une fois
+                votre accès validé.
+              </p>
+            </div>
+            <Link
+              href="/login"
+              className="inline-block text-[13px] font-medium text-[#F5B85B] underline-offset-4 hover:underline focus-visible:ring-2 focus-visible:ring-[#F5B85B]/50 focus-visible:outline-none"
+            >
+              Retour à la connexion
+            </Link>
+          </motion.div>
+        ) : (
+          <motion.form
+            noValidate
+            className="space-y-5"
+            variants={reducedMotion ? undefined : itemVariants}
+            onSubmit={form.handleSubmit(onSubmit)}
+          >
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={step}
@@ -381,17 +470,44 @@ export function RegisterForm() {
                 Continuer
               </Button>
             ) : (
-              <Button type="submit" data-auth-cta disabled className="flex-1 cursor-not-allowed">
-                Envoyer la demande
+              <Button
+                type="submit"
+                data-auth-cta
+                disabled={pending}
+                className="flex-1 cursor-pointer"
+              >
+                {pending ? (
+                  <span className="flex items-center gap-2.5">
+                    <span
+                      aria-hidden="true"
+                      className="size-4 animate-spin rounded-full border-2 border-[#1a1206]/30 border-t-[#1a1206]"
+                    />
+                    Envoi…
+                  </span>
+                ) : (
+                  "Envoyer la demande"
+                )}
               </Button>
             )}
           </div>
+
+          {error && (
+            <motion.p
+              role="alert"
+              className="rounded-xl border border-[#f87171]/25 bg-[#f87171]/10 px-3.5 py-2.5 text-[12.5px] text-[#fca5a5]"
+              initial={reducedMotion ? false : { opacity: 0, y: -6 }}
+              animate={{ opacity: 1, y: 0 }}
+            >
+              {error}
+            </motion.p>
+          )}
 
           <p className="rounded-xl border border-[#F5B85B]/20 bg-[#F5B85B]/[0.06] px-3.5 py-3 text-[12px] leading-relaxed text-white/60">
             L&apos;ouverture des comptes est pilotée par les établissements. Cette demande sert à
             instruire votre accès, elle ne crée pas encore de compte.
           </p>
         </motion.form>
+        )}
 
         <motion.div className="space-y-5" variants={reducedMotion ? undefined : itemVariants}>
           <AuthDivider label="OU" />
