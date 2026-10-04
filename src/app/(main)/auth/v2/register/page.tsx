@@ -1,55 +1,66 @@
 import Link from "next/link";
 
-import { Globe } from "lucide-react";
 import type { Metadata } from "next";
 
 import { APP_CONFIG } from "@/config/app-config";
 
+import { AuthShowcase } from "../../_components/auth-showcase";
 import { RegisterForm } from "../../_components/register-form";
-import { GoogleButton } from "../../_components/social-auth/google-button";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Open Source Branded Registration Page with shadcn/ui",
-  description:
-    "Explore an open source branded registration page with a two-column layout, social sign-up, and account details.",
+  title: "Activer mon accès | LagoonKey",
+  description: "Activez l'accès à LagoonKey attribué par votre établissement.",
   alternates: {
     canonical: "/auth/v2/register",
   },
 };
 
+/**
+ * Écran d'activation d'un accès invité.
+ *
+ * Ce n'est pas une inscription : le compte a déjà été créé par l'établissement
+ * qui l'a invité. Aucun lien n'est proposé depuis la page de connexion, pour
+ * que l'écran ne soit atteint que depuis le lien d'invitation.
+ *
+ * La page occupe toute la largeur : elle a son propre fond pleine page et ne
+ * doit pas être cantonnée à la moitié de la grille du layout.
+ */
 export default function RegisterV2() {
   return (
-    <>
-      <div className="mx-auto flex w-full flex-col justify-center space-y-8 sm:w-[350px]">
-        <div className="space-y-2 text-center">
-          <h1 className="font-medium text-3xl">Create your account</h1>
-          <p className="text-muted-foreground text-sm">Please enter your details to register.</p>
-        </div>
-        <div className="space-y-4">
-          <GoogleButton className="w-full" />
-          <div className="relative text-center text-sm after:absolute after:inset-0 after:top-1/2 after:z-0 after:flex after:items-center after:border-border after:border-t">
-            <span className="relative z-10 bg-background px-2 text-muted-foreground">Or continue with</span>
+    <div className="relative flex min-h-dvh items-center justify-center overflow-hidden p-4 lg:col-span-2">
+      {/* Fond pleine page, conformément à la maquette. */}
+      <AuthShowcase
+        variant="full"
+        quote="Votre établissement vous a attribué un accès. Définissez votre mot de passe pour commencer."
+      />
+
+      <div className="relative z-10 w-full max-w-sm space-y-6">
+        <header className="flex items-center justify-center">
+          <span className="text-lg font-medium text-primary-foreground">LagoonKey</span>
+        </header>
+
+        <div className="space-y-6 rounded-2xl bg-card p-6 shadow-lg">
+          <div className="space-y-1.5 text-center">
+            <h1 className="font-medium text-xl">Activer mon accès</h1>
+            <p className="text-muted-foreground text-sm">
+              Renseignez votre identité et choisissez votre mot de passe.
+            </p>
           </div>
+
           <RegisterForm />
         </div>
-      </div>
 
-      <div className="absolute top-5 flex w-full justify-end px-10">
-        <div className="text-muted-foreground text-sm">
-          Already have an account?{" "}
-          <Link prefetch={false} className="text-foreground" href="login">
-            Login
+        <p className="text-center text-sm text-primary-foreground/80">
+          Vous avez déjà un accès ?{" "}
+          <Link prefetch={false} className="underline" href="/auth/v2/login">
+            Se connecter
           </Link>
-        </div>
-      </div>
+        </p>
 
-      <div className="absolute bottom-5 flex w-full justify-between px-10">
-        <div className="text-sm">{APP_CONFIG.copyright}</div>
-        <div className="flex items-center gap-1 text-sm">
-          <Globe className="size-4 text-muted-foreground" />
-          ENG
-        </div>
+        <p className="text-center text-xs text-primary-foreground/60">{APP_CONFIG.copyright}</p>
       </div>
-    </>
+    </div>
   );
 }

@@ -61,7 +61,7 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
 const PROTECTED_PREFIXES = ["/dashboard"];
 
 /** Pages d'authentification, qui ne doivent pas rediriger vers elles-mêmes. */
-const AUTH_PAGES = ["/auth/v1/login", "/auth/v2/login", "/auth/v1/register", "/auth/v2/register"];
+const AUTH_PAGES = ["/auth/v2/login", "/auth/v2/register"];
 
 function isProtected(pathname: string): boolean {
   return PROTECTED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -71,13 +71,34 @@ function isAuthPage(pathname: string): boolean {
   return AUTH_PAGES.includes(pathname);
 }
 
+/**
+ * Noms possibles du cookie de session Auth.js.
+ *
+ * En production le nom est stable, mais le préfixe `__Secure-` s'ajoute derrière
+ * HTTPS et le suffixe `.0` apparaît lorsque le cookie est découpé. Que la session
+ * soit portée par un jeton ou par une ligne en base, le nom reste
+ * `authjs.session-token` : les variantes couvrent donc les deux modes sans rien
+ * concéder sur la sécurité.
+ *
+ * Cette vérification ne remplace pas la lecture de session : elle évite
+ * seulement d'afficher la page de connexion à un utilisateur déjà connecté.
+ */
+const SESSION_COOKIE_NAMES = [
+  "authjs.session-token",
+  "__Secure-authjs.session-token",
+  "authjs.session-token.0",
+  "__Secure-authjs.session-token.0",
+];
+
+function hasSessionCookie(request: NextRequest): boolean {
+  return SESSION_COOKIE_NAMES.some((name) => request.cookies.has(name));
+}
+
 export async function proxy(request: NextRequest): Promise<NextResponse> {
   const { pathname } = request.nextUrl;
+  const sessionPresent = hasSessionCookie(request);
 
-  const hasSessionCookie = request.cookies.has("authjs.session-token") ||
-    request.cookies.has("__Secure-authjs.session-token");
-
-  if (isProtected(pathname) && !hasSessionCookie && !isAuthPage(pathname)) {
+  if (isProtected(pathname) && !sessionPresent && !isAuthPage(pathname)) {
     const loginUrl = new URL("/auth/v2/login", request.url);
     // On mémorise la destination pour y revenir après connexion.
     loginUrl.searchParams.set("callbackUrl", `${pathname}${request.nextUrl.search}`);

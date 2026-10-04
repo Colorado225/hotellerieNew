@@ -78,12 +78,14 @@ export const sidebarItems: NavGroup[] = [
         title: "Réservations",
         url: "/dashboard/reservations",
         icon: CalendarRange,
+        disabled: true,
       },
       {
         id: "guests",
         title: "Clients",
         url: "/dashboard/guests",
         icon: Users,
+        disabled: true,
       },
       {
         id: "room-plan",

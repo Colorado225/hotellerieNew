@@ -10,9 +10,21 @@
 
 import { HotelClassification, Prisma, PrismaClient } from "@prisma/client";
 
+import { hashPassword } from "../src/modules/auth/password";
+
 const prisma = new PrismaClient();
 
 const DEMO_ORG_SLUG = "hotel-ivoire-demo";
+
+/**
+ * Mot de passe des comptes de démonstration.
+ *
+ * Valeur publique et volontairement faible : ces comptes n'existent que dans
+ * une base locale. Le seed refuse de s'exécuter en production (section 130), le
+ * risque est donc nul — mais la valeur doit rester explicite pour que personne
+ * ne la réutilise ailleurs.
+ */
+const SEED_PASSWORD = "DemoIvoire2026!";
 
 /** Refuse de s'exécuter si l'environnement est marqué production. */
 function assertNotProduction(): void {
@@ -400,9 +412,89 @@ async function seedIdentity(
     })),
   });
 
+  // Utilisateurs du personnel.
+  //
+  // Sans ces comptes, l'application n'a personne à qui se connecter : les rôles
+  // et permissions seraient créés mais jamais portés par un utilisateur. Le
+  // propriétaire couvre toute l'organisation, les autres rôles sont limités à
+  // l'établissement de démonstration, conformément à la portée de `user_roles`.
+  //
+  // Les mots de passe sont hashés avec le même algorithme que l'authentification
+  // (Argon2id). Ils ne valent que pour la démonstration et sont documentés comme
+  // tels : aucun secret réel ne figure dans le dépôt.
+  const staffPassword = await hashPassword(SEED_PASSWORD);
+
+  const staff = [
+    { email: "owner@demo.ci", firstName: "Aya", lastName: "Kouassi", roleCode: "OWNER" },
+    {
+      email: "manager@demo.ci",
+      firstName: "Koffi",
+      lastName: "Traoré",
+      roleCode: "GENERAL_MANAGER",
+    },
+    {
+      email: "reception@demo.ci",
+      firstName: "Fatou",
+      lastName: "Koné",
+      roleCode: "FRONT_DESK_MANAGER",
+    },
+    {
+      email: "receptionist@demo.ci",
+      firstName: "Ibrahim",
+      lastName: "Bamba",
+      roleCode: "RECEPTIONIST",
+    },
+    { email: "cashier@demo.ci", firstName: "Adjoua", lastName: "N'Guessan", roleCode: "CASHIER" },
+  ];
+
+  const roles = await tx.role.findMany({
+    where: { organizationId },
+    select: { id: true, code: true },
+  });
+
+  // La clé du dictionnaire est typée explicitement : sans cela, `Map` infère
+  // `RoleCode | null` et l'indexation par chaîne du personnel est refusée.
+  const roleByCode = new Map<string, string>(
+    roles.flatMap((role) => (role.code ? [[role.code as string, role.id] as const] : [])),
+  );
+
+  for (const member of staff) {
+    const roleId = roleByCode.get(member.roleCode);
+
+    if (!roleId) {
+      throw new Error(`Rôle ${member.roleCode} introuvable pour le seed.`);
+    }
+
+    const user = await tx.user.create({
+      data: {
+        organizationId,
+        firstName: member.firstName,
+        lastName: member.lastName,
+        email: member.email,
+        phone: `+2250700000${String(staff.indexOf(member)).padStart(3, "0")}`,
+        passwordHash: staffPassword,
+        // `INVITED` refuserait la connexion : un compte de démonstration doit
+        // être actif, sinon personne ne peut tester l'application.
+        status: "ACTIVE",
+      },
+      select: { id: true },
+    });
+
+    await tx.userRole.create({
+      data: {
+        userId: user.id,
+        roleId,
+        // Le propriétaire couvre l'organisation, les autres sont rattachés à
+        // l'établissement : c'est ce qui donne à la réception son périmètre.
+        propertyId: member.roleCode === "OWNER" ? null : propertyId,
+      },
+    });
+  }
+
   console.log(
     `${SYSTEM_ROLES.length} rôles, ${PERMISSION_MATRIX.length} permissions, ` +
-      "5 entreprises et 10 clients créés",
+      "5 entreprises, 10 clients et " +
+      `${staff.length} utilisateurs de démonstration créés`,
   );
 }
 

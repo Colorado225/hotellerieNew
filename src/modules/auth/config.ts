@@ -1,5 +1,7 @@
 import type { NextAuthConfig } from "next-auth";
+import type { Adapter } from "next-auth/adapters";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { z } from "zod";
 
@@ -21,15 +23,115 @@ const SESSION_MAX_AGE_SECONDS = Number(process.env.AUTH_SESSION_MAX_AGE ?? 43_20
 const MAX_FAILED_ATTEMPTS = Number(process.env.AUTH_MAX_FAILED_ATTEMPTS ?? 5);
 const LOCKOUT_MINUTES = Number(process.env.AUTH_LOCKOUT_MINUTES ?? 15);
 
+/**
+ * Adapter Prisma ajusté aux contraintes du modèle multi-tenant.
+ *
+ * L'adapter officiel suppose deux choses qui sont fausses ici :
+ *
+ * 1. `getUserByEmail` utilise `findUnique({ where: { email } })`. Dans ce
+ *    schéma l'unicité porte sur le couple `(organizationId, email)`, pas sur
+ *    le seul email — `findUnique` lèverait une erreur. `findFirst` est le bon
+ *    appel, et l'ambiguïté est traitée plus bas.
+ * 2. `createUser` attend `name` et `emailVerified`, champs absents du modèle.
+ *    La création est ici interdite : un compte ne naît que d'une invitation,
+ *    jamais d'une connexion OAuth.
+ */
+const tenantAdapter: Adapter = {
+  ...(PrismaAdapter(prisma) as Adapter),
+
+  /**
+   * Recherche par email sans supposer l'unicité globale.
+   *
+   * Le même email peut appartenir à deux organisations différentes. Si c'est
+   * le cas, la connexion est refusée plus loin : rattacher la session au
+   * mauvais hôtel serait une fuite inter-tenant.
+   */
+  async getUserByEmail(email) {
+    const matches = await prisma.user.findMany({
+      where: { email: { equals: email, mode: "insensitive" }, deletedAt: null },
+      select: { id: true },
+      take: 2,
+    });
+
+    // Une seule correspondance est utilisable ; zéro ou plusieurs ne le sont pas.
+    if (matches.length !== 1) {
+      return null;
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: matches[0].id } });
+
+    if (!user) {
+      return null;
+    }
+
+    // `AdapterUser` exige `emailVerified`, que le modèle ne porte pas. La
+    // propriété est fournie ici sans être persistée : la vérification n'a pas
+    // lieu d'être côté base puisque ce sont les providers qui la garantissent,
+    // et aucune décision d'accès ne s'appuie sur ce champ.
+    return {
+      id: user.id,
+      email: user.email,
+      name: `${user.firstName} ${user.lastName}`,
+      emailVerified: null,
+    };
+  },
+
+  /**
+   * Empêche Auth.js d'écraser l'identité d'un compte existant.
+   *
+   * Après une connexion OAuth, Auth.js appelle `updateUser` pour aligner le
+   * profil sur les informations renvoyées par le fournisseur — dont le nom.
+   * Sans garde-fou, le `given_name` de Google remplacerait le nom de famille
+   * réellement utilisé dans l'établissement. La méthode est neutralisée : le
+   * profil Google ne doit jamais devenir la source de vérité du dossier
+   * interne.
+   */
+  async updateUser() {
+    throw new Error(
+      "La mise à jour automatique du profil est désactivée : le dossier utilisateur fait foi.",
+    );
+  },
+
+  /**
+   * Refuse toute création de compte.
+   *
+   * Appelé uniquement si Auth.js tente un auto-enregistrement après une
+   * connexion OAuth réussie, ce qui ne devrait pas arriver puisque le callback
+   * `signIn` filtre en amont. On refuse explicitement plutôt que de laisser
+   * l'erreur du schéma fuiter : mieux vaut un refus lisible qu'une inscription
+   * accidentelle dans un établissement.
+   */
+  async createUser() {
+    throw new Error(
+      "La création de compte est désactivée : un accès doit être attribué par un établissement.",
+    );
+  },
+};
+
 const credentialsSchema = z.object({
   email: z.string().trim().toLowerCase().email(),
   password: z.string().min(1),
 });
 
 export const authConfig = {
-  adapter: PrismaAdapter(prisma),
+  adapter: tenantAdapter,
   session: {
-    strategy: "database",
+    /**
+     * Stratégie JWT.
+     *
+     * Auth.js refuse le provider Credentials avec la stratégie `database`
+     * (`UnsupportedStrategy`) : le provider ne peut valider un mot de passe que
+     * si la session est portée par le jeton. C'est une contrainte de la
+     * bibliothèque, pas un choix de conception.
+     *
+     * La révocabilité n'est pas perdue pour autant. Le jeton ne contient que
+     * l'identifiant utilisateur et expire rapidement ; chaque requête métier
+     * relit ensuite `users` et `user_roles` en base via
+     * `listAccessibleProperties`. Un compte désactivé ou privé de ses rôles
+     * perd donc l'accès immédiatement, sans attendre l'expiration du jeton.
+     * La révocation immédiate du jeton lui-même reste approximative.
+     */
+    strategy: "jwt",
     maxAge: SESSION_MAX_AGE_SECONDS,
     updateAge: 60 * 60,
   },
@@ -125,17 +227,129 @@ export const authConfig = {
         };
       },
     }),
+
+    /**
+     * Connexion par compte Google.
+     *
+     * Ce fournisseur n'ouvre aucun compte : il ne fait que prouver la
+     * possession d'une adresse email. L'accès reste conditionné à l'existence
+     * du compte en base et à son affectation à un établissement, vérifiées dans
+     * le callback `signIn`.
+     *
+     * Sans identifiants, le fournisseur n'est pas enregistré : le bouton est
+     * alors masqué côté interface. Cela évite une erreur de configuration en
+     * développement.
+     */
+    ...(process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET
+      ? [
+          Google({
+            // L'email renvoyé par Google est vérifié par le fournisseur : c'est
+            // cette garantie qui autorise le rapprochement avec une ligne
+            // `users` existante, par ailleurs créée par invitation.
+            allowDangerousEmailAccountLinking: true,
+            profile(profile) {
+              return {
+                id: profile.sub,
+                name: profile.given_name ?? profile.name ?? "",
+                email: profile.email,
+                image: profile.picture,
+              };
+            },
+          }),
+        ]
+      : []),
   ],
   callbacks: {
+    /**
+     * Filtre d'accès commun aux providers.
+     *
+     * Credentials est déjà filtré dans `authorize`. Ce callback couvre Google
+     * et applique les mêmes règles : compte actif, non verrouillé, rattaché à
+     * au moins un établissement. Sans cela, une adresse Google valide
+     * ouvrirait une session dans le vide.
+     */
+    async signIn({ user, account, profile }) {
+      if (account?.provider === "credentials") {
+        return true;
+      }
+
+      const email = user.email ?? (profile as { email?: string } | undefined)?.email;
+
+      if (!email) {
+        return false;
+      }
+
+      const matches = await prisma.user.findMany({
+        where: { email: { equals: email, mode: "insensitive" }, deletedAt: null },
+        select: {
+          id: true,
+          status: true,
+          lockedUntil: true,
+        },
+        take: 2,
+      });
+
+      // Aucun compte, ou plusieurs : le rattachement serait ambigu. Dans les
+      // deux cas la connexion est refusée.
+      if (matches.length !== 1) {
+        return false;
+      }
+
+      const [existing] = matches;
+
+      if (existing.status !== "ACTIVE") {
+        return false;
+      }
+
+      if (existing.lockedUntil && existing.lockedUntil > new Date()) {
+        return false;
+      }
+
+      const { properties } = await listAccessibleProperties(existing.id);
+
+      if (properties.length === 0) {
+        return false;
+      }
+
+      // La remise à zéro des compteurs et l'horodatage sont alignés sur le
+      // provider Credentials pour que les deux chemins se comportent pareil.
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
+      });
+
+      return true;
+    },
+
     /**
      * Enrichit la session avec l'identifiant utilisateur. Sans ce champ,
      * aucun module métier ne pourrait résoudre le tenant.
      */
-    async session({ session, user }) {
-      if (session.user) {
-        session.user.id = user.id;
+    /**
+     * Enrichit la session avec l'identifiant utilisateur.
+     *
+     * En stratégie JWT, `user` n'est fourni qu'à l'émission du jeton ; les
+     * invocations suivantes ne le contiennent pas. L'identifiant est donc
+     * transporté par le jeton lui-même, faute de quoi `session.user.id` serait
+     * absent et aucun module métier ne pourrait résoudre le tenant.
+     */
+    async session({ session, token }) {
+      if (session.user && token.sub) {
+        session.user.id = token.sub;
       }
       return session;
+    },
+    /**
+     * Porte l'identifiant utilisateur dans le jeton.
+     *
+     * `token.sub` est déjà renseigné par Auth.js ; le rappel explicite garde le
+     * contrat lisible si un fournisseur fournit un identifiant différent.
+     */
+    async jwt({ token, user }) {
+      if (user?.id) {
+        token.sub = user.id;
+      }
+      return token;
     },
   },
   events: {

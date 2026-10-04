@@ -27,7 +27,31 @@ function check(label: string, condition: boolean, detail = ""): void {
   }
 }
 
-const ORG = "59314561-e871-4760-a135-ad3dcebc8a06";
+/**
+ * Organisation de démonstration.
+ *
+ * L'identifiant est résolu à l'exécution et non figé : le seed supprime puis
+ * recrée l'organisation à chaque exécution, un UUID en dur devenait donc invalide
+ * et le test échouait sur « propriété introuvable » sans raison apparente.
+ */
+let ORG = "";
+
+/** Charge l'organisation de démonstration et mémorise son identifiant. */
+async function loadDemoOrganization(): Promise<string> {
+  const organization = await prisma.organization.findFirst({
+    where: { slug: "hotel-ivoire-demo" },
+    select: { id: true },
+  });
+
+  if (!organization) {
+    throw new Error(
+      "Organisation de démonstration introuvable. Lancez `npm run db:seed` avant ce test.",
+    );
+  }
+
+  ORG = organization.id;
+  return ORG;
+}
 
 /**
  * Supprime le jeu de données de test.
@@ -69,6 +93,10 @@ async function cleanupFinanceFixture(propertyId: string, organizationId: string)
 }
 
 async function main(): Promise<void> {
+  // L'organisation est résolue avant tout accès aux données : les scénarios
+  // suivants en dépendent pour poser le contexte RLS.
+  await loadDemoOrganization();
+
   // --- Calcul des montants (section 51) ----------------------------------
   console.log("\n1. Calcul d'une charge (section 51)");
   const noTax = computeChargeAmounts(1, 50_000n, null);
@@ -149,10 +177,16 @@ async function main(): Promise<void> {
   const fixture = await prisma.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT set_config('app.organization_id', ${ORG}, true)`;
 
+    // `properties` est protégée par `organization_isolation`. L'organisation
+    // suffit à la rendre lisible, mais les tables opérationnelles (chambres,
+    // tarifs) exigent en plus `app.property_id` : le poser dès l'établissement
+    // identifié, sinon les lectures suivantes renvoient zéro.
     const property = await tx.property.findFirstOrThrow({
       where: { code: "HID" },
       select: { id: true, businessDate: true },
     });
+
+    await tx.$executeRaw`SELECT set_config('app.property_id', ${property.id}, true)`;
 
     const guest = await tx.guest.create({
       data: {

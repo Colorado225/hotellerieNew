@@ -54,6 +54,30 @@ npm run db:seed               # établissement de démonstration
 npm run dev
 ```
 
+## Comptes de démonstration
+
+Le seed crée cinq comptes du personnel, tous avec le mot de passe
+`DemoIvoire2026!`. Ces identifiants n'existent que dans une base locale : le seed
+refuse de s'exécuter en production.
+
+| Email                | Rôle               | Portée                     |
+| -------------------- | ------------------ | -------------------------- |
+| `owner@demo.ci`      | Propriétaire       | Toute l'organisation       |
+| `manager@demo.ci`    | Directeur général  | Établissement de démo      |
+| `reception@demo.ci`  | Responsable réception | Établissement de démo   |
+| `receptionist@demo.ci` | Réceptionniste    | Établissement de démo      |
+| `cashier@demo.ci`    | Caissier           | Établissement de démo      |
+
+## Configuration requise
+
+`AUTH_SECRET` doit contenir une valeur non vide, sans quoi Auth.js refuse
+toute requête d'authentification (`MissingSecret`) et la connexion échoue
+silencieusement :
+
+```bash
+openssl rand -base64 32
+```
+
 ## Vérifications
 
 ```bash

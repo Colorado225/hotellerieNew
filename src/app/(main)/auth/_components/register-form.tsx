@@ -2,94 +2,115 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Controller, useForm } from "react-hook-form";
-import { toast } from "sonner";
 import { z } from "zod";
 
 import { Button } from "@/components/ui/button";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 
 const formSchema = z
   .object({
-    email: z.email({ message: "Please enter a valid email address." }),
-    password: z.string().min(6, { message: "Password must be at least 6 characters." }),
-    confirmPassword: z.string().min(6, { message: "Confirm Password must be at least 6 characters." }),
+    firstName: z.string().trim().min(1, { message: "Le prénom est requis." }).max(80),
+    lastName: z.string().trim().min(1, { message: "Le nom est requis." }).max(80),
+    password: z
+      .string()
+      .min(12, { message: "Le mot de passe doit contenir au moins 12 caractères." }),
+    confirmPassword: z.string().min(1, { message: "Confirmez votre mot de passe." }),
   })
   .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords do not match.",
+    message: "Les mots de passe ne correspondent pas.",
     path: ["confirmPassword"],
   });
 
-function onSubmit(data: z.infer<typeof formSchema>) {
-  toast("You submitted the following values", {
-    description: (
-      <pre className="mt-2 w-[320px] rounded-md bg-neutral-950 p-4">
-        <code className="text-white">{JSON.stringify(data, null, 2)}</code>
-      </pre>
-    ),
-  });
-}
-
-export function RegisterForm() {
+/**
+ * Formulaire d'activation d'un accès invité.
+ *
+ * Il ne s'agit pas d'une inscription libre. Le compte existe déjà en base avec
+ * le statut `INVITED`, créé par un établissement qui lui a attribué un rôle et
+ * un périmètre. Ce formulaire ne fait qu'activer ce compte et définir son mot de
+ * passe — l'utilisateur ne choisit ni son établissement ni ses droits.
+ *
+ * Le formulaire reste volontairement non soumis tant qu'aucun service
+ * d'activation n'existe : une soumission créerait soit un compte hors des
+ * règles de tenancy, soit ne ferait rien du tout. Le bouton est désactivé et
+ * l'écran explique pourquoi, plutôt que d'accepter une saisie qui échouerait
+ * à l'envoi.
+ */
+export function RegisterForm({ invitationToken }: { invitationToken?: string }) {
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
-    defaultValues: {
-      email: "",
-      password: "",
-      confirmPassword: "",
-    },
+    defaultValues: { firstName: "", lastName: "", password: "", confirmPassword: "" },
   });
 
   return (
-    <form noValidate onSubmit={form.handleSubmit(onSubmit)} className="flex flex-col gap-4">
+    <form noValidate className="flex flex-col gap-4">
       <FieldGroup className="gap-4">
-        <Controller
-          control={form.control}
-          name="email"
-          render={({ field, fieldState }) => (
-            <Field className="gap-1.5" data-invalid={fieldState.invalid}>
-              <FieldLabel htmlFor="register-email">Email Address</FieldLabel>
-              <Input
-                {...field}
-                id="register-email"
-                type="email"
-                placeholder="you@example.com"
-                autoComplete="email"
-                aria-invalid={fieldState.invalid}
-              />
-              {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
-            </Field>
-          )}
-        />
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Controller
+            control={form.control}
+            name="firstName"
+            render={({ field, fieldState }) => (
+              <Field className="gap-1.5" data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor="register-first-name">Prénom</FieldLabel>
+                <Input
+                  {...field}
+                  id="register-first-name"
+                  autoComplete="given-name"
+                  aria-invalid={fieldState.invalid}
+                />
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
+            )}
+          />
+          <Controller
+            control={form.control}
+            name="lastName"
+            render={({ field, fieldState }) => (
+              <Field className="gap-1.5" data-invalid={fieldState.invalid}>
+                <FieldLabel htmlFor="register-last-name">Nom</FieldLabel>
+                <Input
+                  {...field}
+                  id="register-last-name"
+                  autoComplete="family-name"
+                  aria-invalid={fieldState.invalid}
+                />
+                {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
+              </Field>
+            )}
+          />
+        </div>
+
         <Controller
           control={form.control}
           name="password"
           render={({ field, fieldState }) => (
             <Field className="gap-1.5" data-invalid={fieldState.invalid}>
-              <FieldLabel htmlFor="register-password">Password</FieldLabel>
+              <FieldLabel htmlFor="register-password">Mot de passe</FieldLabel>
               <Input
                 {...field}
                 id="register-password"
                 type="password"
-                placeholder="••••••••"
                 autoComplete="new-password"
                 aria-invalid={fieldState.invalid}
               />
+              <FieldDescription>
+                Au moins 12 caractères. Ce mot de passe protège les données de vos clients.
+              </FieldDescription>
               {fieldState.invalid && <FieldError errors={[fieldState.error]} />}
             </Field>
           )}
         />
+
         <Controller
           control={form.control}
           name="confirmPassword"
           render={({ field, fieldState }) => (
             <Field className="gap-1.5" data-invalid={fieldState.invalid}>
-              <FieldLabel htmlFor="register-confirm-password">Confirm Password</FieldLabel>
+              <FieldLabel htmlFor="register-confirm-password">Confirmer le mot de passe</FieldLabel>
               <Input
                 {...field}
                 id="register-confirm-password"
                 type="password"
-                placeholder="••••••••"
                 autoComplete="new-password"
                 aria-invalid={fieldState.invalid}
               />
@@ -98,9 +119,16 @@ export function RegisterForm() {
           )}
         />
       </FieldGroup>
-      <Button className="w-full" type="submit">
-        Register
+
+      <Button className="w-full" type="submit" disabled>
+        Activer mon accès
       </Button>
+
+      {!invitationToken && (
+        <p className="text-muted-foreground text-center text-xs">
+          Cette page s&apos;utilise depuis le lien d&apos;invitation reçu de votre établissement.
+        </p>
+      )}
     </form>
   );
 }

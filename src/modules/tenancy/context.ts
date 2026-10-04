@@ -47,7 +47,20 @@ export interface AccessiblePropertiesResult {
   organizationId: string | null;
 }
 
-/** Établissements auxquels l'utilisateur a accès, selon ses rôles. */
+/**
+ * Établissements auxquels l'utilisateur a accès, selon ses rôles.
+ *
+ * `user_roles` reste lisible sans contexte RLS — la politique y compare par
+ * l'utilisateur authentifié — mais `properties` est protégée par
+ * `organization_isolation` et ne renvoie aucune ligne si `app.organization_id`
+ * n'est pas positionné. La lecture doit donc être faite dans une transaction
+ * où ce contexte est posé, sinon la fonction renverrait systématiquement zéro
+ * et l'utilisateur serait refusé à tort.
+ *
+ * Cette fonction est appelée à des moments où aucun contexte tenant n'existe
+ * encore : authentification, résolution de session. Elle ne peut pas supposer
+ * que l'appelant a déjà ouvert une transaction.
+ */
 export const listAccessibleProperties = cache(async (userId: string): Promise<AccessiblePropertiesResult> => {
   const assignments = await prisma.userRole.findMany({
     where: { userId },
@@ -56,6 +69,12 @@ export const listAccessibleProperties = cache(async (userId: string): Promise<Ac
       role: { select: { isSystemRole: true, code: true, organizationId: true } },
     },
   });
+
+  // Aucun rôle : rien à résoudre, et aucune organisation connue pour poser un
+  // contexte. Le RLS ne pourrait de toute façon rien laisser passer.
+  if (assignments.length === 0) {
+    return { properties: [], isOrganizationScoped: false, organizationId: null };
+  }
 
   // Un rôle système ou un rôle sans portée donne accès à toute l'organisation.
   const isOrganizationScoped = assignments.some(
@@ -72,20 +91,29 @@ export const listAccessibleProperties = cache(async (userId: string): Promise<Ac
     .map((assignment) => assignment.propertyId)
     .filter((propertyId): propertyId is string => propertyId !== null);
 
-  const properties: AccessibleProperty[] = await prisma.property.findMany({
-    where: isOrganizationScoped
-      ? { organizationId: organizationId ?? undefined, deletedAt: null, status: "ACTIVE" }
-      : { id: { in: scopedIds }, deletedAt: null, status: "ACTIVE" },
-    select: {
-      id: true,
-      name: true,
-      code: true,
-      timezone: true,
-      currency: true,
-      businessDate: true,
-    },
-    orderBy: { name: "asc" },
-  });
+  // Lecture des établissements dans une transaction où le contexte RLS de
+  // l'organisation est positionné. Sans cela, la politique
+  // `organization_isolation` ne laisserait passer aucune ligne.
+  const properties: AccessibleProperty[] = organizationId
+    ? await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT set_config('app.organization_id', ${organizationId}, true)`;
+
+        return tx.property.findMany({
+          where: isOrganizationScoped
+            ? { organizationId, deletedAt: null, status: "ACTIVE" }
+            : { id: { in: scopedIds }, organizationId, deletedAt: null, status: "ACTIVE" },
+          select: {
+            id: true,
+            name: true,
+            code: true,
+            timezone: true,
+            currency: true,
+            businessDate: true,
+          },
+          orderBy: { name: "asc" },
+        });
+      })
+    : [];
 
   return { properties, isOrganizationScoped, organizationId };
 });
