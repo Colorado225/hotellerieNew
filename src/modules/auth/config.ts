@@ -136,8 +136,8 @@ export const authConfig = {
     updateAge: 60 * 60,
   },
   pages: {
-    signIn: "/auth/v2/login",
-    error: "/auth/v2/login",
+    signIn: "/login",
+    error: "/login",
   },
   trustHost: true,
   providers: [

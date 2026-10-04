@@ -10,6 +10,12 @@ import { PREFERENCE_DEFAULTS } from "@/lib/preferences/preferences-config";
 import { ThemeBootScript } from "@/scripts/theme-boot";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
+/*
+ * `auth.css` porte la direction artistique des écrans d'authentification, appliquée
+ * via le sélecteur `[data-auth-theme]`. Elle est importée ici car Next.js
+ * n'autorise l'import de CSS que depuis le layout racine.
+ */
+import "./auth.css";
 import "./globals.css";
 
 export const metadata: Metadata = {

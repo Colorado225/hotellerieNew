@@ -61,7 +61,7 @@ function applySecurityHeaders(response: NextResponse): NextResponse {
 const PROTECTED_PREFIXES = ["/dashboard"];
 
 /** Pages d'authentification, qui ne doivent pas rediriger vers elles-mêmes. */
-const AUTH_PAGES = ["/auth/v2/login", "/auth/v2/register"];
+const AUTH_PAGES = ["/login", "/register"];
 
 function isProtected(pathname: string): boolean {
   return PROTECTED_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -99,7 +99,7 @@ export async function proxy(request: NextRequest): Promise<NextResponse> {
   const sessionPresent = hasSessionCookie(request);
 
   if (isProtected(pathname) && !sessionPresent && !isAuthPage(pathname)) {
-    const loginUrl = new URL("/auth/v2/login", request.url);
+    const loginUrl = new URL("/login", request.url);
     // On mémorise la destination pour y revenir après connexion.
     loginUrl.searchParams.set("callbackUrl", `${pathname}${request.nextUrl.search}`);
 

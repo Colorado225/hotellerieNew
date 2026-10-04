@@ -1,0 +1,250 @@
+/*
+ * Authentification LagoonKey — direction artistique (pages.md sections 3, 8, 9, 10, 14).
+ *
+ * Ce système est volontairement isolé du thème applicatif : les presets du
+ * dashboard (brutalist, soft-pop, tangerine) pilotent l'interface métier et
+ * doivent rester inchangés. Les écrans d'authentification portent leur propre
+ * palette sombre et ambrée, appliquée via les variables sémantiques de shadcn
+ * sous le sélecteur `[data-auth-theme]`, ce qui permet de réutiliser Button,
+ * Input, Checkbox et Card sans les dupliquer.
+ */
+
+[data-auth-theme] {
+  /* Fonds (section 3). */
+  --background: #050505;
+  --foreground: #ffffff;
+
+  /* Surfaces translucides (section 8). */
+  --card: rgba(255, 255, 255, 0.035);
+  --card-foreground: #ffffff;
+  --popover: #0d0f12;
+  --popover-foreground: #ffffff;
+
+  /* Accent ambré : utilisé avec parcimonie, jamais en aplat. */
+  --primary: #f5b85b;
+  --primary-foreground: #1a1206;
+
+  --secondary: rgba(255, 255, 255, 0.06);
+  --secondary-foreground: #ffffff;
+
+  --muted: rgba(255, 255, 255, 0.04);
+  --muted-foreground: rgba(255, 255, 255, 0.6);
+
+  /* Bordures à 8 % d'opacité, comme spécifié. */
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.08);
+
+  --destructive: #f87171;
+  --destructive-foreground: #ffffff;
+
+  --ring: rgba(245, 184, 91, 0.45);
+  --radius: 0.875rem;
+}
+
+/*
+ * Grain (section 18).
+ *
+ * Trame SVG encodée en data-URI appliquée en fond, sans requête réseau. Le grain
+ * casse les aplats profonds qui seraient sinon rendus comme des bandes par les
+ * écrans 8 bits.
+ */
+[data-auth-grain] {
+  position: relative;
+  isolation: isolate;
+}
+
+[data-auth-grain]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.035;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/*
+ * Surface vitrée (section 8).
+ *
+ * Appliquée au conteneur du formulaire : fond translucide, flou du fond,
+ * bordure fine et ombre très douce. Le `backdrop-filter` est coûteux ; il est
+ * désactivé si l'utilisateur demande une réduction des animations, où il
+ * n'apporte rien sans la profondeur qu'il crée.
+ */
+[data-auth-glass] {
+  background: rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  box-shadow:
+    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+    0 24px 70px -20px rgba(0, 0, 0, 0.8);
+}
+
+/*
+ * Halo derrière le formulaire (section 10).
+ *
+ * Radial en ambré très dilué. L'animation de respiration est portée par Framer
+ * Motion ; ce dégradé n'est que la matière sur laquelle elle s'applique.
+/*
+ * Halo derrière le formulaire (section 10).
+ *
+ * Radial en ambré très dilué. L'animation de respiration est portée par Framer
+ * Motion ; ce dégradé n'est que la matière sur laquelle elle s'applique.
+ */
+[data-auth-glow] {
+  background: radial-gradient(
+    circle at center,
+    rgba(245, 184, 91, 0.1),
+    transparent 65%
+  );
+}
+
+/*
+ * Champ de saisie (section 14).
+ *
+ * Hauteur, rayon et fond repris à l'identique de la spécification. La bordure
+ * s'accentue au survol et l'anneau de focus ambré reste très discret pour ne
+ * pas concurrencer l'accent du bouton.
+ */
+[data-auth-input] {
+  height: 52px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.035);
+  border-color: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  transition:
+    border-color 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 250ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 250ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-auth-input]::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+
+[data-auth-input]:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+[data-auth-input]:focus-visible {
+  border-color: rgba(245, 184, 91, 0.4);
+  box-shadow: 0 0 0 3px rgba(245, 184, 91, 0.08);
+  outline: none;
+}
+
+/*
+ * Bouton d'action principal (section 16).
+ *
+ * Le dégradé ambré est appliqué sur un pseudo-élément afin que l'effet lumineux
+ * au survol puisse se déplacer sans repeindre le fond du bouton, qui resterait
+ * sinon un aplat.
+ */
+[data-auth-cta] {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  height: 54px;
+  border-radius: 14px;
+  font-weight: 600;
+  background: linear-gradient(180deg, #f7c377 0%, #f5b85b 100%);
+  color: #1a1206;
+  transition:
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    filter 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-auth-cta]::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 80%
+  );
+  transition: opacity 400ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-auth-cta]:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+[data-auth-cta]:hover:not(:disabled)::before {
+  opacity: 1;
+}
+
+[data-auth-cta]:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+[data-auth-cta]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/*
+ * Bouton secondaire (social auth).
+ *
+ * Doit rester visuellement secondaire au CTA principal : contour seul, aucun
+ * aplat ambré.
+ */
+[data-auth-secondary] {
+  height: 50px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  color: rgba(255, 255, 255, 0.85);
+  transition:
+    background-color 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 200ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 200ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+[data-auth-secondary]:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.16);
+  transform: translateY(-1px);
+}
+
+[data-auth-secondary]:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/*
+ * Séparateur « OU » (section 11).
+ *
+ * Le trait est un dégradé transparent au centre : il se fond dans le fond au
+ * lieu de s'interrompre, ce qui évite l'effet « césure » d'une bordure pleine.
+ */
+[data-auth-divider]::before,
+[data-auth-divider]::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+}
+
+/*
+ * Barre de robustesse du mot de passe (section 29).
+ *
+ * La couleur suit le niveau : rouge, ambre, ambre clair, ambre soutenu. Le
+ * remplissage est animé par Framer Motion ; seule la piste est déclarée ici.
+ */
+[data-auth-strength-track] {
+  height: 3px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-auth-glass] {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
